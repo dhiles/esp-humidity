@@ -1,0 +1,57 @@
+
+set(ENABLE_MQTT ON)
+set(ENABLE_WIFI ON)
+
+idf_component_register(
+    SRCS 
+        "main.cpp"
+    
+    INCLUDE_DIRS 
+        "."
+        "../../main"
+    
+    REQUIRES
+        esp32-shared 
+        esp_http_client
+        esp_psram
+        esp_wifi
+        json
+        esp_timer
+        sdmmc
+        fatfs
+        ds18b20 onewire_bus
+    
+    PRIV_REQUIRES
+        # Private dependencies
+    
+    EMBED_FILES
+        # Files to embed in flash
+)
+
+# Suppress warnings and explicitly disable -Werror
+target_compile_options(${COMPONENT_LIB} PRIVATE 
+    -Wno-error           # Disable warnings as errors
+    -Wno-format 
+    -Wno-unused-but-set-parameter 
+    -Wno-cpp 
+    -Wno-missing-field-initializers 
+    -Wno-deprecated-declarations 
+    -Wno-conversion
+)
+
+# Apply build flags equivalent to PlatformIO configuration
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    CONFIG_MQTT_TRANSPORT_OVER_WS=1
+    CONFIG_ESP_IDF_MQTT=1
+    BOARD_HAS_PSRAM=1
+)
+# In your main CMakeLists.txt
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBOARD_HAS_PSRAM")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBOARD_HAS_PSRAM")
+
+# PSRAM configuration (equivalent to board_build.psram_type = opi)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    CONFIG_SPIRAM=y
+    CONFIG_SPIRAM_MODE_OPI=y
+    CONFIG_SPIRAM_SPEED_80M=y
+)
