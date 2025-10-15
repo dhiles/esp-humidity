@@ -3,7 +3,6 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 list(APPEND EXTRA_COMPONENT_DIRS
     components/app_main
     components/esp32-shared
-    components/bme280
 )
 project(suncam)
 set(IDF_TARGET esp32)

@@ -14,6 +14,5 @@ dependencies:
   #   # `public` flag doesn't have an effect dependencies of the `main` component.
   #   # All dependencies of `main` are public by default.
   #   public: true
-  espressif/esp-dsp: ^1.6.1
-  espressif/onewire_bus: ^1.0.0
-  espressif/ds18b20: ^0.2.0
+  espressif/i2c_bus: ^1.4.2
+  

@@ -4,7 +4,8 @@ set(ENABLE_WIFI ON)
 
 idf_component_register(
     SRCS 
-        "main.cpp"
+        "main.c"
+    #    "bme280mgr.cpp"
     
     INCLUDE_DIRS 
         "."
@@ -17,9 +18,9 @@ idf_component_register(
         esp_wifi
         json
         esp_timer
-        sdmmc
         fatfs
-        ds18b20 onewire_bus
+        driver 
+        bme280         
     
     PRIV_REQUIRES
         # Private dependencies
@@ -28,15 +29,17 @@ idf_component_register(
         # Files to embed in flash
 )
 
-# Suppress warnings and explicitly disable -Werror
-target_compile_options(${COMPONENT_LIB} PRIVATE 
-    -Wno-error           # Disable warnings as errors
-    -Wno-format 
-    -Wno-unused-but-set-parameter 
-    -Wno-cpp 
-    -Wno-missing-field-initializers 
-    -Wno-deprecated-declarations 
+# Optional: Retain your suppression options (C++-aware)
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:-Wno-implicit-function-declaration>
+    -Wno-error 
+    -Wno-format
+    -Wno-unused-but-set-parameter
+    -Wno-cpp
+    -Wno-missing-field-initializers
+    -Wno-deprecated-declarations
     -Wno-conversion
+    $<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-parameter>
 )
 
 # Apply build flags equivalent to PlatformIO configuration

@@ -1,4 +1,5 @@
 build/
 components/esp32-shared/
 components/bme280/
+!components/bme280/CMakeLists.txt
 managed_components/
