@@ -4,8 +4,8 @@ set(ENABLE_WIFI ON)
 
 idf_component_register(
     SRCS 
-        "main.c"
-    #    "bme280mgr.cpp"
+        "main.cpp"
+        "bme280mgr.cpp"
     
     INCLUDE_DIRS 
         "."

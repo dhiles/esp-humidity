@@ -28,11 +28,6 @@
 #include <stdio.h>
 #include "bme280mgr.h"
 
-extern "C"
-{
-    void app_main(void);
-}
-
 static const char *TAG = "MAIN";
 /*
 // Structure to pass parameters to the task
@@ -131,22 +126,10 @@ void app_main(void)
 }
     */
 
+// =================================================================
+// APP ENTRY POINT
+// =================================================================
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "Starting...");
-
     humidity_start();
-
-    while (1)
-    {
-        float humidity = humidity_read();
-        ESP_LOGI(TAG, "Humidity: %.2f %%RH", humidity);
-        //  char timestamp[32];
-        //  MyNTP::getTimestamp(timestamp, sizeof(timestamp));
-        //  char msg[64];
-        //  snprintf(msg, sizeof(msg), "{\"temperature\":%.2f,\"timestamp\":\"%s\"}", temperature, timestamp);
-        //  MyMQTT::publish("diymalls1/well", msg);
-
-        vTaskDelay(pdMS_TO_TICKS(5000));
-    }
 }
