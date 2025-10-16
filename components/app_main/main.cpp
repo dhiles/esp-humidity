@@ -18,6 +18,7 @@
 // #include "oled.h"
 
 #include "espnow_basic_config.h"
+#include "nvs_json.h"
 #include "mywifi.h"
 #include "mymqtt.h"
 #include "myntp.h"
@@ -29,107 +30,46 @@
 #include "bme280mgr.h"
 
 static const char *TAG = "MAIN";
-/*
-// Structure to pass parameters to the task
-typedef struct
-{
-    uint32_t sleep_duration;
-    const char *mqtt_uri;
-    WorkInterface *work_impl;
-} sleep_loop_params_t;
 
-class WorkImplementation : public WorkInterface
+static void check_psram(void)
 {
-public:
-    void init_work() override
+    if (esp_psram_is_initialized())
     {
-        ESP_LOGI(TAG, "init_work");
+        size_t psram_size = esp_psram_get_size();
+        size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        ESP_LOGI(TAG, "PSRAM initialized: Total size = %u bytes, Free = %u bytes", psram_size, psram_free);
     }
-
-    void do_work() override
+    else
     {
-        ESP_LOGI(TAG, "Performing work...");
-}
-
-void end_work() override
-{
-    ESP_LOGI(TAG, "Ending work...");
-}
-
-void deinit_work() override
-{
-    ESP_LOGI(TAG, "Deinitializing work...");
-    // deinit_cam();
-}
-}
-;
-
-// Task function to run sleep_loop
-static void sleep_loop_task(void *pvParameters)
-{
-    sleep_loop_params_t *params = (sleep_loop_params_t *)pvParameters;
-    ESP_LOGI(TAG, "Starting sleep_loop task...");
-
-    // Call sleep_loop with the provided parameters
-    sleep_loop(params->sleep_duration, params->mqtt_uri, *(params->work_impl));
-
-    // If sleep_loop returns, delete the task (optional, depending on your use case)
-    ESP_LOGI(TAG, "sleep_loop task completed, deleting task...");
-    vTaskDelete(NULL);
-}
-    */
-/*
-void app_main(void)
-{
-    static WorkImplementation work_impl;
-
-    // Initialize NVS (required for Wi-Fi and other components)
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
+        ESP_LOGE(TAG, "PSRAM not initialized!");
     }
-    ESP_ERROR_CHECK(ret);
-
-    // Dynamically allocate parameters for the task to avoid dangling pointer
-    sleep_loop_params_t *params = (sleep_loop_params_t *)malloc(sizeof(sleep_loop_params_t));
-    if (params == NULL)
-    {
-        ESP_LOGE(TAG, "Failed to allocate memory for task parameters");
-        return;
-    }
-
-    // Initialize the parameters
-    params->sleep_duration = 30;
-    params->mqtt_uri = MQTTConfig::URI;
-    params->work_impl = &work_impl;
-
-    // Create the sleep_loop task
-    BaseType_t task_created = xTaskCreate(
-        sleep_loop_task,   // Task function
-        "sleep_loop_task", // Task name
-        4096,              // Stack size (adjust as needed)
-        params,            // Task parameters (dynamically allocated)
-        5,                 // Task priority
-        NULL               // Task handle (NULL if not needed)
-    );
-
-    if (task_created != pdPASS)
-    {
-        ESP_LOGE(TAG, "Failed to create sleep_loop task");
-        free(params); // Clean up on failure
-        return;
-    }
-
-    ESP_LOGI(TAG, "sleep_loop task created successfully");
 }
-    */
 
 // =================================================================
 // APP ENTRY POINT
 // =================================================================
 extern "C" void app_main(void)
 {
+    // Initialize all NVS JSON objects
+    esp_err_t err = init_nvs_json_all();
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to initialize NVS JSON: %s", esp_err_to_name(err));
+        return;
+    }
+    check_psram();
+    MyWiFi::global_init();
+    while (MyWiFi::connectWithBackoff("") != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to connect WiFi. Full shutdown and retry.");
+        // If connectWithBackoff fails, it already calls MyWiFi::full_deinitialize()
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        //        heap_trace_stop();
+        ESP_LOGE(TAG, "Dumping heap trace on WiFi connection failure:");
+        //        heap_trace_dump();
+    }
+    MyNTP::initialize();
+    MyNTP::syncTime();
+
     humidity_start();
 }
