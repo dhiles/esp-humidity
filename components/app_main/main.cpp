@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -23,10 +24,8 @@
 #include "mymqtt.h"
 #include "myntp.h"
 #include "constants.h"
-#include "loop.h"
-#include "work_interface.h"
+#include "webserver.h"
 
-#include <stdio.h>
 #include "bme280mgr.h"
 
 static const char *TAG = "MAIN";
@@ -72,4 +71,5 @@ extern "C" void app_main(void)
     MyNTP::syncTime();
 
     humidity_start();
+    start_webserver();
 }

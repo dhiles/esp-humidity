@@ -26,6 +26,7 @@ typedef int32_t s32;
 typedef uint32_t u32;
 
 static struct bme280_dev bme280_dev;
+struct bme280_data comp_data;
 
 // =================================================================
 // ESP-IDF I2C ABSTRACTION FUNCTIONS (Your previous correct code)
@@ -188,7 +189,6 @@ static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
     int8_t rslt = SUCCESS;
     int8_t idx = 0;
     uint8_t status_reg;
-    struct bme280_data comp_data;
 
     while (idx < SAMPLE_COUNT)
     {
@@ -225,11 +225,11 @@ static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
 #else
             ESP_LOGI(TAG, "Humidity[%d]:   %lu %%RH", idx, (long unsigned int)comp_data.humidity);
 #endif
-            idx++;
+           // idx++;
         }
 
         // Add a small delay for good measure in a FreeRTOS loop
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 
     return rslt;

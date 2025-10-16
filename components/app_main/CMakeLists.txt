@@ -7,6 +7,7 @@ idf_component_register(
         "main.cpp"
         "bme280mgr.cpp"
         "nvs_json.cpp"
+        "webserver.cpp"
     
     INCLUDE_DIRS 
         "."
@@ -17,6 +18,7 @@ idf_component_register(
         esp_http_client
         esp_psram
         esp_wifi
+        esp_http_server
         json
         esp_timer
         fatfs

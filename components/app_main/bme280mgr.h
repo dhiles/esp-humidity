@@ -10,6 +10,8 @@
 #include "driver/i2c.h"
 #include "bme280.h"  // Espressif component
 
+extern struct bme280_data comp_data;
+
 void humidity_start(void);
 void humidity_reader_task(void*);
 void i2c_scanner(void);
