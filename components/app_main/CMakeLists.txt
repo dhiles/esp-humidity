@@ -8,6 +8,7 @@ idf_component_register(
         "bme280mgr.cpp"
         "nvs_json.cpp"
         "webserver.cpp"
+        "ble_provisioning.cpp"
     
     INCLUDE_DIRS 
         "."
@@ -24,7 +25,8 @@ idf_component_register(
         fatfs
         driver 
         bme280         
-    
+        bt
+
     PRIV_REQUIRES
         # Private dependencies
     
