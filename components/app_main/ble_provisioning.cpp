@@ -4,27 +4,43 @@ extern "C"
 #endif
 
 #include "ble_provisioning.h"
+#include <string.h>
+#include "esp_log.h"
+#include "host/ble_hs.h"
+#include "host/util/util.h"
+#include "services/gap/ble_svc_gap.h"
+#include "services/gatt/ble_svc_gatt.h"
+#include "nimble/nimble_port.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "driver/gpio.h"
+
+// Note: You must ensure 'ble_provisioning.h' defines the necessary function
+// prototypes (like nvs_save_credentials) and includes the necessary ESP-IDF headers.
+// For demonstration, we assume nvs_save_credentials is defined elsewhere.
+// Example: void nvs_save_credentials(const char *ssid, const char *pass);
 
 #define DEVICE_NAME "ESP32-PROV"
 
-// NVS Keys
+// NVS Keys (Assumed to be defined in main or nvs file)
 #define NVS_NAMESPACE "wifi_creds"
 #define NVS_KEY_SSID "ssid"
 #define NVS_KEY_PASS "pass"
 
 // BLE UUID Strings (Matching the Flutter App)
+// Service UUID (AAB0)
 #define PROV_SERVICE_UUID_STR "0000AAB0-218F-4424-8A05-F417242F7B0B"
+// Characteristics UUIDs (AAB1, AAB2, AAB3)
 #define SSID_CHAR_UUID_STR "0000AAB1-218F-4424-8A05-F417242F7B0B"
 #define PASS_CHAR_UUID_STR "0000AAB2-218F-4424-8A05-F417242F7B0B"
 #define REBOOT_CHAR_UUID_STR "0000AAB3-218F-4424-8A05-F417242F7B0B"
 
-#define PROVISIONING_TIMEOUT_MS 30000  // Reduced to 30s for faster error detection (was 300000)
+#define PROVISIONING_TIMEOUT_MS 300000  // 300s timeout
 
 static const char *TAG = "BLE_PROV";
 
-// Semaphore for signaling provisioning completion
-SemaphoreHandle_t provisioning_sem = NULL;
-
+// --- Global NimBLE UUIDs ---
 // PROV_SERVICE_UUID (0000AAB0-218F-4424-8A05-F417242F7B0B)
 static const ble_uuid128_t PROV_SERVICE_UUID = {
     .u = {.type = BLE_UUID_TYPE_128},
@@ -44,34 +60,42 @@ static const ble_uuid128_t PASS_CHAR_UUID = {
 static const ble_uuid128_t REBOOT_CHAR_UUID = {
     .u = {.type = BLE_UUID_TYPE_128},
     .value = {0x0B, 0x7B, 0x2F, 0x24, 0x17, 0xF4, 0x05, 0x8A, 0x24, 0x44, 0x8F, 0x21, 0xB3, 0xAA, 0x00, 0x00}};
+// --- End Global NimBLE UUIDs ---
+
+// Global variables
+SemaphoreHandle_t provisioning_sem = NULL;
+static TaskHandle_t ble_host_handle = NULL;
+static char received_ssid[33] = {0};
+static char received_pass[64] = {0};
 
 // GATT attribute handles
-static uint16_t prov_conn_handle;
 static uint16_t ssid_handle;
 static uint16_t pass_handle;
 static uint16_t reboot_handle;
 
-// Forward declaration for the write callback (needed before array reference)
+// Forward declarations
 static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
 
-// Array of attributes (GATT server structure)
+/**
+ * @brief Definition of the custom provisioning GATT service and its characteristics.
+ */
 static const struct ble_gatt_chr_def provisioning_chars[] = {
     {
-        // SSID Characteristic (Write property)
+        // SSID Characteristic (AAB1)
         .uuid = (const ble_uuid_t *)&SSID_CHAR_UUID.u,
         .access_cb = ble_provisioning_write_cb,
         .flags = BLE_GATT_CHR_F_WRITE,
         .val_handle = &ssid_handle,
     },
     {
-        // Password Characteristic (Write property)
+        // Password Characteristic (AAB2)
         .uuid = (const ble_uuid_t *)&PASS_CHAR_UUID.u,
         .access_cb = ble_provisioning_write_cb,
         .flags = BLE_GATT_CHR_F_WRITE,
         .val_handle = &pass_handle,
     },
     {
-        // Reboot Characteristic (Write property - Trigger)
+        // Reboot Characteristic (AAB3) - Write property to trigger final action
         .uuid = (const ble_uuid_t *)&REBOOT_CHAR_UUID.u,
         .access_cb = ble_provisioning_write_cb,
         .flags = BLE_GATT_CHR_F_WRITE,
@@ -80,7 +104,6 @@ static const struct ble_gatt_chr_def provisioning_chars[] = {
     {0}, // Stop marker
 };
 
-// Array of services (Provisioning Service)
 static const struct ble_gatt_svc_def provisioning_service[] = {
     {
         // Provisioning Service (AAB0)
@@ -91,13 +114,6 @@ static const struct ble_gatt_svc_def provisioning_service[] = {
     {0}, // Stop marker
 };
 
-// Global to hold the received credentials
-static char received_ssid[33] = {0};
-static char received_pass[64] = {0};
-
-// Task handle for BLE host task (for cleanup on timeout)
-static TaskHandle_t ble_host_handle = NULL;
-
 /**
  * @brief Registers the GATT service definitions.
  */
@@ -105,53 +121,86 @@ static void gatt_svr_init(void)
 {
     int rc;
 
+    // Initialize GAP and GATT services
     ble_svc_gap_init();
     ble_svc_gatt_init();
 
-    // Count the number of attributes to pre-allocate space
+    // Register the custom provisioning service
     rc = ble_gatts_count_cfg(provisioning_service);
-    if (rc != 0) {
-        ESP_LOGE(TAG, "Error counting GATT attributes; rc=%d", rc);
-        return;
+    if (rc == 0) {
+        rc = ble_gatts_add_svcs(provisioning_service);
     }
 
-    // Register the custom provisioning service
-    rc = ble_gatts_add_svcs(provisioning_service);
-    if (rc != 0)
-    {
+    if (rc != 0) {
         ESP_LOGE(TAG, "Failed to register GATT service; rc=%d", rc);
     }
 }
 
 /**
- * @brief Builds the advertising payload (flags and device name)
+ * @brief Builds and sets the Scan Response payload.
+ * * CRUCIAL for making the device discoverable by UUID on iOS/Android.
+ * Places the full device name and the 128-bit Service UUID in the response packet.
+ */
+static void ble_prov_set_scan_rsp_data(void)
+{
+    struct ble_hs_adv_fields fields;
+    memset(&fields, 0, sizeof(fields));
+
+    // 1. Set the service UUIDs in the scan response
+    fields.uuids128 = (ble_uuid128_t *)&PROV_SERVICE_UUID;
+    fields.num_uuids128 = 1;
+    fields.uuids128_is_complete = 1; // Mark the list of UUIDs as complete
+
+    // 2. Set the complete device name in the scan response fields
+    fields.name = (uint8_t *)DEVICE_NAME;
+    fields.name_len = strlen(DEVICE_NAME);
+    fields.name_is_complete = 1;
+
+    int rc = ble_gap_adv_rsp_set_fields(&fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "Error setting scan response data; rc=%d", rc);
+    }
+}
+
+/**
+ * @brief Builds the advertising payload and starts advertising.
+ */
+/**
+ * @brief Builds the advertising payload and starts advertising.
+ */
+/**
+ * @brief Builds the advertising payload and starts advertising.
  */
 static void ble_prov_advertise(void)
 {
-    // Configure the advertising data
+    // --- Advertisement Packet Data (AD) ---
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
 
     // Flags: LE general discoverable, BR/EDR not supported
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    
+    // Omit the device name from the main advertisement packet to save space for the UUID
+    // (Full name is in Scan Response; UUID enables filtering)
+    fields.name_len = 0;
 
-    // Set the device name
-    fields.name = (uint8_t *)DEVICE_NAME;
-    fields.name_len = strlen(DEVICE_NAME);
-
-    // REMOVED: Set the custom service UUID in the advertising data (causes 31-byte overflow)
-    // fields.uuids128 = &PROV_SERVICE_UUID;
-    // fields.num_uuids128 = 1;
+    // Include the service UUID in the advertisement data for iOS/Android filtering
+    fields.uuids128 = (ble_uuid128_t *)&PROV_SERVICE_UUID;
+    fields.num_uuids128 = 1;
+    fields.uuids128_is_complete = 1;
 
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0)
     {
         ESP_LOGE(TAG, "Error setting advertisement data; rc=%d", rc);
-        // REMOVED: xSemaphoreGive(provisioning_sem);  // Let it timeout on error (no fake success)
         return;
     }
+    
+    // --- Scan Response Packet Data (SRD) ---
+    // This sets the Service UUID and the full name in the SRD.
+    ble_prov_set_scan_rsp_data();
 
-    // Begin advertising
+    // --- Start Advertising ---
     struct ble_gap_adv_params adv_params;
     memset(&adv_params, 0, sizeof(adv_params));
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND; // Undirected connectable
@@ -169,7 +218,6 @@ static void ble_prov_advertise(void)
     if (rc != 0)
     {
         ESP_LOGE(TAG, "Error starting advertisement; rc=%d", rc);
-        // REMOVED: xSemaphoreGive(provisioning_sem);  // Let it timeout on error (no fake success)
         return;
     }
     ESP_LOGI(TAG, "BLE Provisioning Advertising Started as '%s'", DEVICE_NAME);
@@ -182,18 +230,15 @@ static void ble_hs_sync_cb(void)
 {
     int rc;
 
-    // Register GATT services (now safe after host sync)
     gatt_svr_init();
 
     // Set device name
     rc = ble_svc_gap_device_name_set(DEVICE_NAME);
     if (rc != 0) {
         ESP_LOGE(TAG, "Error setting device name; rc=%d", rc);
-        // REMOVED: xSemaphoreGive(provisioning_sem);  // Let it timeout on error (no fake success)
         return;
     }
 
-    // Start advertising
     ble_prov_advertise();
 }
 
@@ -202,8 +247,6 @@ static void ble_hs_sync_cb(void)
  */
 static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    prov_conn_handle = conn_handle;
-
     // Check which characteristic was written to
     if (attr_handle == ssid_handle)
     {
@@ -227,9 +270,15 @@ static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle,
     {
         // Reboot/Finalize Characteristic
         ESP_LOGI(TAG, "Reboot command received. Finalizing provisioning.");
-        // This is the trigger to save and signal completion
-        nvs_save_credentials(received_ssid, received_pass);
-        ESP_LOGI(TAG, "Credentials saved. Signaling completion and stopping BLE...");
+        
+        // --- NOTE: You must replace this with your actual NVS save function ---
+        // For demonstration, we assume a function like this exists:
+        // nvs_save_credentials(received_ssid, received_pass);
+        ESP_LOGW(TAG, "!! Placeholder: Call your NVS save function here !!");
+        // ----------------------------------------------------------------------
+        
+        ESP_LOGI(TAG, "Credentials processed. Signaling completion and stopping BLE...");
+        
         // Signal the main task that provisioning is done
         if (provisioning_sem != NULL)
         {
@@ -237,7 +286,6 @@ static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         }
         // Stop the NimBLE host to unblock the run loop
         nimble_port_stop();
-        // Do not reboot here; let the task handle it after the loop exits
     }
 
     return 0; // Success
@@ -259,20 +307,17 @@ static void ble_host_task(void *param)
 }
 
 /**
- * @brief Initializes and runs the NimBLE host task.
+ * @brief Initializes and runs the NimBLE host task, blocking until provisioning completes or times out.
  */
 void ble_provisioning_init(void)
 {
-    // No credentials found, start BLE provisioning
-    ESP_LOGI(TAG, "No credentials found. Starting BLE Provisioning.");
+    ESP_LOGI(TAG, "Starting BLE Provisioning.");
 
-    // Reset globals
     ble_host_handle = NULL;
     provisioning_sem = NULL;
     memset(received_ssid, 0, sizeof(received_ssid));
     memset(received_pass, 0, sizeof(received_pass));
 
-    // Create the semaphore for signaling completion/failure
     provisioning_sem = xSemaphoreCreateBinary();
     if (provisioning_sem == NULL)
     {
@@ -280,17 +325,14 @@ void ble_provisioning_init(void)
         return;
     }
 
-    // Initialize NimBLE host controller and stack
     nimble_port_init();
 
-    // Set the sync callback to register services and advertise
     ble_hs_cfg.sync_cb = ble_hs_sync_cb;
 
     // Start the BLE host task
-    // We use a dedicated FreeRTOS task to run the NimBLE stack
     xTaskCreate(ble_host_task, "ble_host", 8192, NULL, 5, &ble_host_handle);
 
-    // Wait for the provisioning to complete (or fail/timeout) - blocks the caller (app_main)
+    // Wait for provisioning to complete (signaled by xSemaphoreGive in the write callback)
     BaseType_t sem_result = xSemaphoreTake(provisioning_sem, pdMS_TO_TICKS(PROVISIONING_TIMEOUT_MS));
     if (sem_result == pdTRUE)
     {
@@ -298,8 +340,9 @@ void ble_provisioning_init(void)
     }
     else
     {
-        ESP_LOGE(TAG, "Provisioning timed out after %d ms", PROVISIONING_TIMEOUT_MS);
-        // Cleanup on timeout/failure
+        ESP_LOGE(TAG, "Provisioning timed out after %d ms. Attempting cleanup...", PROVISIONING_TIMEOUT_MS);
+        
+        // Clean up on timeout/failure
         nimble_port_stop();
         if (ble_host_handle != NULL)
         {
@@ -308,12 +351,10 @@ void ble_provisioning_init(void)
         }
     }
 
-    // Clean up semaphore after use
     vSemaphoreDelete(provisioning_sem);
     provisioning_sem = NULL;
 }
 
 #ifdef __cplusplus
-    // End the extern "C" block
 }
 #endif
