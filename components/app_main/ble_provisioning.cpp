@@ -301,7 +301,8 @@ static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         len = len < sizeof(received_ssid) - 1 ? len : sizeof(received_ssid) - 1;
         memcpy(received_ssid, ctxt->om->om_data, len);
         received_ssid[len] = '\0';
-        ESP_LOGI(TAG, "Received SSID: %s", received_ssid);
+        ESP_LOGI(TAG, "Received SSID: %s len=%d", received_ssid, len);
+        nvs_save_ssid(received_ssid);
     }
     else if (attr_handle == pass_handle)
     {
@@ -309,7 +310,8 @@ static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle,
         len = len < sizeof(received_pass) - 1 ? len : sizeof(received_pass) - 1;
         memcpy(received_pass, ctxt->om->om_data, len);
         received_pass[len] = '\0';
-        ESP_LOGI(TAG, "Received PASS: [HIDDEN]");
+        ESP_LOGI(TAG, "Received PASS: %s len=%d", received_pass, len);
+        nvs_save_password(received_pass);
     }
     else if (attr_handle == reboot_handle)
     {
