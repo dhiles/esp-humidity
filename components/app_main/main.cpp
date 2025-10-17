@@ -21,6 +21,7 @@
 #include "espnow_basic_config.h"
 #include "nvs_json.h"
 #include "mywifi.h"
+#include "ble_provisioning.h"
 #include "mymqtt.h"
 #include "myntp.h"
 #include "constants.h"
@@ -58,15 +59,36 @@ extern "C" void app_main(void)
     }
     check_psram();
     MyWiFi::global_init();
-    while (MyWiFi::connectWithBackoff("") != ESP_OK)
+
+    // Initial Wi-Fi connection attempt
+    esp_err_t wifi_ret = MyWiFi::connectWithBackoff("");
+    while (wifi_ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "Failed to connect WiFi. Full shutdown and retry.");
+        if (wifi_ret == ESP_ERR_NO_WIFI_CREDENTIALS)
+        {
+            ESP_LOGI(TAG, "No Wi-Fi credentials found. Starting BLE provisioning...");
+            ble_provisioning_init(); // Blocks until provisioned, timed out, or failed
+
+            // After provisioning, reload and retry connection immediately
+            wifi_ret = MyWiFi::connectWithBackoff(""); // Use "" to trigger fresh load
+            if (wifi_ret == ESP_OK)
+            {
+                ESP_LOGI(TAG, "Wi-Fi connected successfully after provisioning");
+                break; // Exit loop on success
+            }
+            // If provisioning succeeded but connect still fails (unlikely, but e.g., bad creds), fall through to generic failure handling
+        }
+
+        // Generic failure: creds present but connection failed (bad network/creds)
+        ESP_LOGE(TAG, "Wi-Fi connection failed (error: %s). Performing full shutdown and retry.",
+                 esp_err_to_name(wifi_ret));
         // If connectWithBackoff fails, it already calls MyWiFi::full_deinitialize()
         vTaskDelay(pdMS_TO_TICKS(10000));
-        //        heap_trace_stop();
-        ESP_LOGE(TAG, "Dumping heap trace on WiFi connection failure:");
-        //        heap_trace_dump();
+
+        // Retry the connection
+        wifi_ret = MyWiFi::connectWithBackoff("");
     }
+
     MyNTP::initialize();
     MyNTP::syncTime();
 

@@ -22,8 +22,14 @@ extern "C" {
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "nvs_credentials.h"
+#include <freertos/semphr.h>
+
+extern SemaphoreHandle_t provisioning_sem;
 
 void ble_provisioning_init(void);
+
+#undef min
+#undef max
 
 #ifdef __cplusplus
 }

@@ -6,7 +6,6 @@ idf_component_register(
     SRCS 
         "main.cpp"
         "bme280mgr.cpp"
-        "nvs_json.cpp"
         "webserver.cpp"
         "ble_provisioning.cpp"
     
