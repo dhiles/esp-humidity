@@ -5,6 +5,7 @@ extern "C"
 
 #include "ble_provisioning.h"
 #include <string.h>
+#include <stdio.h>
 #include "esp_log.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
@@ -15,48 +16,33 @@ extern "C"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "driver/gpio.h"
+#include "esp_system.h" // For esp_restart()
 
-// Note: You must ensure 'ble_provisioning.h' defines the necessary function
-// prototypes (like nvs_save_credentials) and includes the necessary ESP-IDF headers.
-// For demonstration, we assume nvs_save_credentials is defined elsewhere.
-// Example: void nvs_save_credentials(const char *ssid, const char *pass);
+// NOTE: Ensure your header or main file provides a definition for:
+// void nvs_save_credentials(const char *ssid, const char *pass);
 
 #define DEVICE_NAME "ESP32-PROV"
-
-// NVS Keys (Assumed to be defined in main or nvs file)
-#define NVS_NAMESPACE "wifi_creds"
-#define NVS_KEY_SSID "ssid"
-#define NVS_KEY_PASS "pass"
-
-// BLE UUID Strings (Matching the Flutter App)
-// Service UUID (AAB0)
-#define PROV_SERVICE_UUID_STR "0000AAB0-218F-4424-8A05-F417242F7B0B"
-// Characteristics UUIDs (AAB1, AAB2, AAB3)
-#define SSID_CHAR_UUID_STR "0000AAB1-218F-4424-8A05-F417242F7B0B"
-#define PASS_CHAR_UUID_STR "0000AAB2-218F-4424-8A05-F417242F7B0B"
-#define REBOOT_CHAR_UUID_STR "0000AAB3-218F-4424-8A05-F417242F7B0B"
-
-#define PROVISIONING_TIMEOUT_MS 300000  // 300s timeout
+#define PROVISIONING_TIMEOUT_MS 600000 // 5 minutes timeout
 
 static const char *TAG = "BLE_PROV";
 
-// --- Global NimBLE UUIDs ---
-// PROV_SERVICE_UUID (0000AAB0-218F-4424-8A05-F417242F7B0B)
+// --- Global NimBLE UUIDs (Static Byte-Reversed Definition) ---
+// Service UUID: 0000AAB0-218F-4424-8A05-F417242F7B0B
 static const ble_uuid128_t PROV_SERVICE_UUID = {
     .u = {.type = BLE_UUID_TYPE_128},
     .value = {0x0B, 0x7B, 0x2F, 0x24, 0x17, 0xF4, 0x05, 0x8A, 0x24, 0x44, 0x8F, 0x21, 0xB0, 0xAA, 0x00, 0x00}};
 
-// SSID_CHAR_UUID (0000AAB1-218F-4424-8A05-F417242F7B0B)
+// SSID Characteristic UUID: 0000AAB1-218F-4424-8A05-F417242F7B0B
 static const ble_uuid128_t SSID_CHAR_UUID = {
     .u = {.type = BLE_UUID_TYPE_128},
     .value = {0x0B, 0x7B, 0x2F, 0x24, 0x17, 0xF4, 0x05, 0x8A, 0x24, 0x44, 0x8F, 0x21, 0xB1, 0xAA, 0x00, 0x00}};
 
-// PASS_CHAR_UUID (0000AAB2-218F-4424-8A05-F417242F7B0B)
+// Password Characteristic UUID: 0000AAB2-218F-4424-8A05-F417242F7B0B
 static const ble_uuid128_t PASS_CHAR_UUID = {
     .u = {.type = BLE_UUID_TYPE_128},
     .value = {0x0B, 0x7B, 0x2F, 0x24, 0x17, 0xF4, 0x05, 0x8A, 0x24, 0x44, 0x8F, 0x21, 0xB2, 0xAA, 0x00, 0x00}};
 
-// REBOOT_CHAR_UUID (0000AAB3-218F-4424-8A05-F417242F7B0B)
+// Reboot Characteristic UUID: 0000AAB3-218F-4424-8A05-F417242F7B0B
 static const ble_uuid128_t REBOOT_CHAR_UUID = {
     .u = {.type = BLE_UUID_TYPE_128},
     .value = {0x0B, 0x7B, 0x2F, 0x24, 0x17, 0xF4, 0x05, 0x8A, 0x24, 0x44, 0x8F, 0x21, 0xB3, 0xAA, 0x00, 0x00}};
@@ -73,8 +59,54 @@ static uint16_t ssid_handle;
 static uint16_t pass_handle;
 static uint16_t reboot_handle;
 
+// Global for address type (or pass as param)
+static uint8_t own_addr_type;
+
 // Forward declarations
 static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
+static void ble_prov_advertise(void);
+static int ble_gap_event_cb(struct ble_gap_event *event, void *arg);
+
+static void format_addr(char *buf, const uint8_t *addr)
+{
+    sprintf(buf, "%02x:%02x:%02x:%02x:%02x:%02x",
+            addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
+}
+
+/**
+ * @brief GAP event callback handler for BLE connections and advertising events.
+ */
+static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
+{
+    switch (event->type) {
+    case BLE_GAP_EVENT_CONNECT:
+        ESP_LOGI(TAG, "Connection established; status=%d", event->connect.status);
+        break;
+
+    case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI(TAG, "Connection lost; reason=%d", event->disconnect.reason);
+        // Restart advertising if provisioning is not yet complete
+        if (provisioning_sem != NULL && uxSemaphoreGetCount(provisioning_sem) == 0) {
+            ESP_LOGI(TAG, "Restarting advertising after disconnect...");
+            ble_prov_advertise();
+        }
+        break;
+
+    case BLE_GAP_EVENT_ADV_COMPLETE:
+        ESP_LOGI(TAG, "Advertising complete; reason=%d", event->adv_complete.reason);
+        // Restart advertising if provisioning is not yet complete
+        if (provisioning_sem != NULL && uxSemaphoreGetCount(provisioning_sem) == 0) {
+            ESP_LOGI(TAG, "Restarting advertising after adv complete...");
+            ble_prov_advertise();
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    return 0;
+}
 
 /**
  * @brief Definition of the custom provisioning GATT service and its characteristics.
@@ -82,21 +114,21 @@ static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle,
 static const struct ble_gatt_chr_def provisioning_chars[] = {
     {
         // SSID Characteristic (AAB1)
-        .uuid = (const ble_uuid_t *)&SSID_CHAR_UUID.u,
+        .uuid = &SSID_CHAR_UUID.u,
         .access_cb = ble_provisioning_write_cb,
         .flags = BLE_GATT_CHR_F_WRITE,
         .val_handle = &ssid_handle,
     },
     {
         // Password Characteristic (AAB2)
-        .uuid = (const ble_uuid_t *)&PASS_CHAR_UUID.u,
+        .uuid = &PASS_CHAR_UUID.u,
         .access_cb = ble_provisioning_write_cb,
         .flags = BLE_GATT_CHR_F_WRITE,
         .val_handle = &pass_handle,
     },
     {
         // Reboot Characteristic (AAB3) - Write property to trigger final action
-        .uuid = (const ble_uuid_t *)&REBOOT_CHAR_UUID.u,
+        .uuid = &REBOOT_CHAR_UUID.u,
         .access_cb = ble_provisioning_write_cb,
         .flags = BLE_GATT_CHR_F_WRITE,
         .val_handle = &reboot_handle,
@@ -108,7 +140,7 @@ static const struct ble_gatt_svc_def provisioning_service[] = {
     {
         // Provisioning Service (AAB0)
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = (const ble_uuid_t *)&PROV_SERVICE_UUID.u,
+        .uuid = &PROV_SERVICE_UUID.u,
         .characteristics = provisioning_chars,
     },
     {0}, // Stop marker
@@ -127,47 +159,89 @@ static void gatt_svr_init(void)
 
     // Register the custom provisioning service
     rc = ble_gatts_count_cfg(provisioning_service);
-    if (rc == 0) {
-        rc = ble_gatts_add_svcs(provisioning_service);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "Error counting GATT cfg; rc=%d", rc);
+        return;
     }
 
-    if (rc != 0) {
-        ESP_LOGE(TAG, "Failed to register GATT service; rc=%d", rc);
+    rc = ble_gatts_add_svcs(provisioning_service);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "Error adding GATT svcs; rc=%d", rc);
+        return;
     }
+
+    ESP_LOGI(TAG, "Custom Provisioning Service (AAB0) registered successfully. SSID handle: %d, PASS: %d, Reboot: %d", ssid_handle, pass_handle, reboot_handle);
+}
+
+/**
+ * @brief Host synchronization callback: start advertising.
+ */
+static void ble_hs_sync_cb(void)
+{
+    int rc;
+
+    // Set device name
+    rc = ble_svc_gap_device_name_set(DEVICE_NAME);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "Error setting device name; rc=%d", rc);
+        return;
+    }
+
+    // Ensure identity address is configured (public or static random)
+    rc = ble_hs_util_ensure_addr(0);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "Failed to ensure BT identity address; rc=%d", rc);
+        return;
+    }
+
+    // Infer address type (public=0, random=1)
+    rc = ble_hs_id_infer_auto(0, &own_addr_type);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "Failed to infer address type; rc=%d", rc);
+        return;
+    }
+
+    // Copy address for logging (optional but useful)
+    uint8_t addr_val[6];
+    rc = ble_hs_id_copy_addr(own_addr_type, addr_val, NULL);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "Failed to copy address; rc=%d", rc);
+        return;
+    }
+    char addr_str[18];
+    format_addr(addr_str, addr_val);
+    ESP_LOGI(TAG, "Using BT identity address: %s (type %d)", addr_str, own_addr_type);
+
+    // Start advertising with configured address type
+    ble_prov_advertise();
 }
 
 /**
  * @brief Builds and sets the Scan Response payload.
- * * CRUCIAL for making the device discoverable by UUID on iOS/Android.
- * Places the full device name and the 128-bit Service UUID in the response packet.
  */
 static void ble_prov_set_scan_rsp_data(void)
 {
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
 
-    // 1. Set the service UUIDs in the scan response
-    fields.uuids128 = (ble_uuid128_t *)&PROV_SERVICE_UUID;
+    // Set the service UUIDs in the scan response (CRITICAL for discovery)
+    fields.uuids128 = (ble_uuid128_t *) &PROV_SERVICE_UUID;
     fields.num_uuids128 = 1;
-    fields.uuids128_is_complete = 1; // Mark the list of UUIDs as complete
-
-    // 2. Set the complete device name in the scan response fields
-    fields.name = (uint8_t *)DEVICE_NAME;
-    fields.name_len = strlen(DEVICE_NAME);
-    fields.name_is_complete = 1;
+    fields.uuids128_is_complete = 1;
 
     int rc = ble_gap_adv_rsp_set_fields(&fields);
-    if (rc != 0) {
+    if (rc != 0)
+    {
         ESP_LOGE(TAG, "Error setting scan response data; rc=%d", rc);
     }
 }
 
-/**
- * @brief Builds the advertising payload and starts advertising.
- */
-/**
- * @brief Builds the advertising payload and starts advertising.
- */
 /**
  * @brief Builds the advertising payload and starts advertising.
  */
@@ -177,17 +251,12 @@ static void ble_prov_advertise(void)
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
 
-    // Flags: LE general discoverable, BR/EDR not supported
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    
-    // Omit the device name from the main advertisement packet to save space for the UUID
-    // (Full name is in Scan Response; UUID enables filtering)
-    fields.name_len = 0;
 
-    // Include the service UUID in the advertisement data for iOS/Android filtering
-    fields.uuids128 = (ble_uuid128_t *)&PROV_SERVICE_UUID;
-    fields.num_uuids128 = 1;
-    fields.uuids128_is_complete = 1;
+    // Set COMPLETE local name in primary advertisement
+    fields.name = (uint8_t *)DEVICE_NAME;
+    fields.name_len = strlen(DEVICE_NAME);
+    fields.name_is_complete = 1;
 
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0)
@@ -195,51 +264,30 @@ static void ble_prov_advertise(void)
         ESP_LOGE(TAG, "Error setting advertisement data; rc=%d", rc);
         return;
     }
-    
-    // --- Scan Response Packet Data (SRD) ---
-    // This sets the Service UUID and the full name in the SRD.
+
+    // --- Scan Response Packet Data (SRD) --- (includes UUID)
     ble_prov_set_scan_rsp_data();
 
     // --- Start Advertising ---
     struct ble_gap_adv_params adv_params;
     memset(&adv_params, 0, sizeof(adv_params));
-    adv_params.conn_mode = BLE_GAP_CONN_MODE_UND; // Undirected connectable
-    adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN; // General discoverable
+    adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
+    adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
     rc = ble_gap_adv_start(
-        BLE_OWN_ADDR_PUBLIC, // Use public address type
-        NULL,                // direct_addr (not used for undirected adv)
-        BLE_HS_FOREVER,      // duration
-        &adv_params,         // adv_params
-        NULL,                // event callback (optional)
-        NULL                 // callback context
-    );
+        own_addr_type, // Use the configured identity address type
+        NULL,
+        BLE_HS_FOREVER,
+        &adv_params,
+        ble_gap_event_cb,
+        NULL);
 
     if (rc != 0)
     {
         ESP_LOGE(TAG, "Error starting advertisement; rc=%d", rc);
         return;
     }
-    ESP_LOGI(TAG, "BLE Provisioning Advertising Started as '%s'", DEVICE_NAME);
-}
-
-/**
- * @brief Host synchronization callback: register services and start advertising.
- */
-static void ble_hs_sync_cb(void)
-{
-    int rc;
-
-    gatt_svr_init();
-
-    // Set device name
-    rc = ble_svc_gap_device_name_set(DEVICE_NAME);
-    if (rc != 0) {
-        ESP_LOGE(TAG, "Error setting device name; rc=%d", rc);
-        return;
-    }
-
-    ble_prov_advertise();
+    ESP_LOGI(TAG, "BLE Provisioning Advertising Started as '%s' with addr type %d", DEVICE_NAME, own_addr_type);
 }
 
 /**
@@ -247,10 +295,8 @@ static void ble_hs_sync_cb(void)
  */
 static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    // Check which characteristic was written to
     if (attr_handle == ssid_handle)
     {
-        // SSID Characteristic
         size_t len = ctxt->om->om_len;
         len = len < sizeof(received_ssid) - 1 ? len : sizeof(received_ssid) - 1;
         memcpy(received_ssid, ctxt->om->om_data, len);
@@ -259,7 +305,6 @@ static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle,
     }
     else if (attr_handle == pass_handle)
     {
-        // Password Characteristic
         size_t len = ctxt->om->om_len;
         len = len < sizeof(received_pass) - 1 ? len : sizeof(received_pass) - 1;
         memcpy(received_pass, ctxt->om->om_data, len);
@@ -268,23 +313,20 @@ static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle,
     }
     else if (attr_handle == reboot_handle)
     {
-        // Reboot/Finalize Characteristic
         ESP_LOGI(TAG, "Reboot command received. Finalizing provisioning.");
-        
+
         // --- NOTE: You must replace this with your actual NVS save function ---
-        // For demonstration, we assume a function like this exists:
+        ESP_LOGW(TAG, "!! Placeholder: Calling NVS save function (nvs_save_credentials) with stored SSID/PASS !!");
         // nvs_save_credentials(received_ssid, received_pass);
-        ESP_LOGW(TAG, "!! Placeholder: Call your NVS save function here !!");
         // ----------------------------------------------------------------------
-        
+
         ESP_LOGI(TAG, "Credentials processed. Signaling completion and stopping BLE...");
-        
-        // Signal the main task that provisioning is done
+
         if (provisioning_sem != NULL)
         {
             xSemaphoreGive(provisioning_sem);
         }
-        // Stop the NimBLE host to unblock the run loop
+        ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
         nimble_port_stop();
     }
 
@@ -297,10 +339,7 @@ static int ble_provisioning_write_cb(uint16_t conn_handle, uint16_t attr_handle,
 static void ble_host_task(void *param)
 {
     ESP_LOGI(TAG, "BLE Host Task Started");
-
-    // This loop prevents the task from exiting
     nimble_port_run();
-
     ESP_LOGI(TAG, "BLE Host Task completed (stopped). Rebooting in 3 seconds...");
     vTaskDelay(pdMS_TO_TICKS(3000));
     esp_restart();
@@ -327,12 +366,14 @@ void ble_provisioning_init(void)
 
     nimble_port_init();
 
+    // Register GATT services BEFORE starting the host
+    gatt_svr_init();
+
     ble_hs_cfg.sync_cb = ble_hs_sync_cb;
 
     // Start the BLE host task
     xTaskCreate(ble_host_task, "ble_host", 8192, NULL, 5, &ble_host_handle);
 
-    // Wait for provisioning to complete (signaled by xSemaphoreGive in the write callback)
     BaseType_t sem_result = xSemaphoreTake(provisioning_sem, pdMS_TO_TICKS(PROVISIONING_TIMEOUT_MS));
     if (sem_result == pdTRUE)
     {
@@ -340,9 +381,7 @@ void ble_provisioning_init(void)
     }
     else
     {
-        ESP_LOGE(TAG, "Provisioning timed out after %d ms. Attempting cleanup...", PROVISIONING_TIMEOUT_MS);
-        
-        // Clean up on timeout/failure
+        ESP_LOGE(TAG, "Provisioning timed out after 5 minutes. Attempting cleanup...");
         nimble_port_stop();
         if (ble_host_handle != NULL)
         {
