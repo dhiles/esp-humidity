@@ -1,4 +1,5 @@
 #include "bme280mgr.h"
+#include "ble_provisioning.h"
 
 static const char *TAG = "BME280";
 
@@ -220,12 +221,20 @@ static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
             comp_data.humidity = comp_data.humidity / 1000;
 #endif
 
+            char msg[50];
+
 #ifdef BME280_DOUBLE_ENABLE
             ESP_LOGI(TAG, "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
+            snprintf(msg, sizeof(msg), "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
+
 #else
             ESP_LOGI(TAG, "Humidity[%d]:   %lu %%RH", idx, (long unsigned int)comp_data.humidity);
 #endif
-           // idx++;
+
+            // Use the safe queue wrapper which now uses the global conn_handle internally
+            send_notification_safe(msg);
+
+            // idx++;
         }
 
         // Add a small delay for good measure in a FreeRTOS loop
@@ -236,7 +245,7 @@ static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
 }
 
 // Task wrapper for the main sensor loop
-void humidity_reader_task(void*)
+void humidity_reader_task(void *)
 {
     int8_t rslt;
     uint32_t period;
@@ -323,4 +332,3 @@ void humidity_start(void)
 
     xTaskCreate(humidity_reader_task, "humidity_reader", 4096, NULL, 5, NULL);
 }
-

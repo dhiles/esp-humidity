@@ -116,7 +116,7 @@ extern "C" void app_main(void)
         ESP_LOGW(TAG, "Skipping NTP/webserver due to Wi-Fi failure. BLE remains available for provisioning/notifications.");
     }
 
-    xTaskCreate(notify_demo_task, "notify_demo", 8192, NULL, 3, &notify_demo_task_handle);
+  //  xTaskCreate(notify_demo_task, "notify_demo", 8192, NULL, 3, &notify_demo_task_handle);
 
     // Main task now idles; BLE host task runs persistently in background
     // You can add periodic tasks here if needed, e.g., to send notifications via BLE
