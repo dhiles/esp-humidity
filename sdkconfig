@@ -2247,6 +2247,14 @@ CONFIG_WIFI_PROV_STA_ALL_CHANNEL_SCAN=y
 # end of Wi-Fi Provisioning Manager
 
 #
+# ESP32 Shared Configuration
+#
+CONFIG_ENABLE_MQTT=y
+CONFIG_ENABLE_WIFI=y
+# CONFIG_ENABLE_SLEEPLOOP is not set
+# end of ESP32 Shared Configuration
+
+#
 # Bus Options
 #
 

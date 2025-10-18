@@ -1,7 +1,3 @@
-
-set(ENABLE_MQTT ON)
-set(ENABLE_WIFI ON)
-
 idf_component_register(
     SRCS 
         "main.cpp"
@@ -15,11 +11,7 @@ idf_component_register(
     
     REQUIRES
         esp32-shared 
-        esp_http_client
-        esp_psram
-        esp_wifi
         esp_http_server
-        json
         esp_timer
         fatfs
         driver 
