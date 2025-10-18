@@ -29,6 +29,7 @@ extern "C" {
 extern SemaphoreHandle_t provisioning_sem;
 
 void ble_provisioning_init(bool blocking);
+void send_notification_safe(const char* msg);
 
 #undef min
 #undef max

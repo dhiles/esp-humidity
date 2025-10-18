@@ -9,20 +9,25 @@ extern "C"
 #include "esp_log.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
-#include "host/ble_hs_mbuf.h"  // For ble_hs_mbuf_from_flat
+#include "host/ble_hs_mbuf.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "nimble/nimble_port.h"
+#include "os/os_mbuf.h"          // Contains declaration for os_mbuf_free()
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "esp_system.h" // For esp_restart()
 
 // NOTE: Ensure your header or main file provides a definition for:
 // void nvs_save_credentials(const char *ssid, const char *pass);
+// And PROVISIONING_TIMEOUT_MS
 
 #define DEVICE_NAME "ESP32-PROV"
+#define MSG_QUEUE_SIZE 10  // Adjust based on expected rate
+#define MAX_MSG_LEN 128    // Max message size for queue
 
 static const char *TAG = "BLE_PROV";
 
@@ -63,7 +68,19 @@ static char received_pass[64] = {0};
 static uint16_t ssid_handle;
 static uint16_t pass_handle;
 static uint16_t reboot_handle;
-static uint16_t msg_handle;  // New: Handle for message notifications
+static uint16_t msg_handle;  // Handle for message notifications
+
+// Queue for safe notifications from other tasks
+static QueueHandle_t notification_queue = NULL;
+
+// Message structure for queue
+typedef struct {
+    uint16_t conn_handle;
+    char msg[MAX_MSG_LEN];
+} notification_msg_t;
+
+// Global for current connection handle (for main task use; update in events)
+static volatile uint16_t current_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
 // Global for address type (or pass as param)
 static uint8_t own_addr_type;
@@ -93,6 +110,7 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         ESP_LOGI(TAG, "Connection established; status=%d", event->connect.status);
         if (event->connect.status == 0) {
+            current_conn_handle = event->connect.conn_handle;  // Update global
             // Start a demo notifier task
             xTaskCreate(notify_demo_task, "notify_demo", 8192, (void*)(uintptr_t)event->connect.conn_handle, 3, &notify_demo_task_handle);
         }
@@ -100,6 +118,7 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "Connection lost; reason=%d", event->disconnect.reason);
+        current_conn_handle = BLE_HS_CONN_HANDLE_NONE;  // Clear global
         if (notify_demo_task_handle != NULL) {
             vTaskDelete(notify_demo_task_handle);
             notify_demo_task_handle = NULL;
@@ -328,6 +347,7 @@ static int send_message_notification(uint16_t conn_handle, const char* msg) {
         return -1;
     }
 
+    // Use ble_hs_mbuf_from_flat to create the message buffer
     struct os_mbuf* mbuf = ble_hs_mbuf_from_flat(msg, strlen(msg));
     if (!mbuf) {
         ESP_LOGE(TAG, "Failed to create mbuf from flat data");
@@ -338,34 +358,65 @@ static int send_message_notification(uint16_t conn_handle, const char* msg) {
     int rc = ble_gatts_notify_custom(conn_handle, msg_handle, mbuf);
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to send notification; rc=%d", rc);
+        // Note: mbuf ownership is transferred on success, but must be freed on error
+        // FIX: Replaced ble_hs_mbuf_free with os_mbuf_free
+        os_mbuf_free(mbuf);
     } else {
         ESP_LOGI(TAG, "Sent notification: %s", msg);
     }
 
-    // Note: mbuf ownership transferred to NimBLE; no manual free needed
-
     return rc;
+}
+
+/**
+ * @brief Safe wrapper to send notifications from other tasks (posts to queue).
+ * This function retrieves the connection handle from the global state.
+ * @param msg: Null-terminated string to send
+ */
+void send_notification_safe(const char* msg) { 
+    if (notification_queue == NULL) {
+        ESP_LOGE(TAG, "Notification queue not initialized");
+        return;
+    }
+    
+    // Retrieve the handle from the global variable
+    uint16_t conn_handle = current_conn_handle; 
+
+    if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        ESP_LOGW(TAG, "Cannot send notification: No active connection.");
+        return;
+    }
+
+
+    notification_msg_t queue_msg;
+    queue_msg.conn_handle = conn_handle; // Use the retrieved handle
+    strncpy(queue_msg.msg, msg, sizeof(queue_msg.msg) - 1);
+    queue_msg.msg[sizeof(queue_msg.msg) - 1] = '\0';
+
+    // Must check if calling from ISR for xQueueSend. Use xQueueSendFromISR if needed.
+    if (xQueueSend(notification_queue, &queue_msg, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Notification queue full; dropped message: %s", msg);
+    }
 }
 
 /**
  * @brief Demo task to send periodic notifications (for testing).
  */
 static void notify_demo_task(void* param) {
-    uint16_t conn_handle = (uint16_t)(uintptr_t)param;
+  //  uint16_t conn_handle = (uint16_t)(uintptr_t)param;
     int counter = 0;
     while (1) {  // Run until disconnect (handled in gap_cb)
-        // Check if still connected
-        int rc = ble_gap_conn_find(conn_handle, NULL);
-        if (rc != 0) {
-            ESP_LOGI(TAG, "Connection lost in demo task; exiting.");
-            break;
-        }
+        
         char msg[50];
         snprintf(msg, sizeof(msg), "Demo event #%d: Hello from ESP32!", ++counter);
-        send_message_notification(conn_handle, msg);
+        
+        // Use the safe queue wrapper to send the message from the non-BLE-host task
+        send_notification_safe(msg);
+        
         vTaskDelay(pdMS_TO_TICKS(5000));  // Every 5s
     }
-    vTaskDelete(NULL);
+    // Task is typically deleted by gap_cb on disconnect, but keep vTaskDelete(NULL) here for completeness if loop breaks
+    vTaskDelete(NULL); 
 }
 
 /**
@@ -404,7 +455,6 @@ static int ble_provisioning_access_cb(uint16_t conn_handle, uint16_t attr_handle
             memcpy(received_ssid, ctxt->om->om_data, len);
             received_ssid[len] = '\0';
             ESP_LOGI(TAG, "Received SSID: %s len=%d", received_ssid, len);
-            nvs_save_ssid(received_ssid);
         }
         else if (attr_handle == pass_handle)
         {
@@ -413,27 +463,25 @@ static int ble_provisioning_access_cb(uint16_t conn_handle, uint16_t attr_handle
             memcpy(received_pass, ctxt->om->om_data, len);
             received_pass[len] = '\0';
             ESP_LOGI(TAG, "Received PASS: %s len=%d", received_pass, len);
-            nvs_save_password(received_pass);
         }
         else if (attr_handle == reboot_handle)
         {
             ESP_LOGI(TAG, "Reboot command received. Finalizing provisioning.");
 
-            // --- NOTE: You must replace this with your actual NVS save function ---
-            ESP_LOGW(TAG, "!! Placeholder: Calling NVS save function (nvs_save_credentials) with stored SSID/PASS !!");
-            // nvs_save_credentials(received_ssid, received_pass);
-            // ----------------------------------------------------------------------
-
-            ESP_LOGI(TAG, "Credentials processed. Signaling completion...");
+            // Check if both credentials were received before saving
+            if (strlen(received_ssid) > 0 && strlen(received_pass) > 0) {
+                nvs_save_credentials(received_ssid, received_pass);
+                ESP_LOGI(TAG, "Credentials saved. Signaling completion...");
+            } else {
+                ESP_LOGE(TAG, "Reboot requested but missing credentials!");
+            }
 
             if (provisioning_sem != NULL)
             {
                 xSemaphoreGive(provisioning_sem);
             }
             ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-            // Note: No nimble_port_stop(); -- Keep BLE running persistently
         }
-        // Note: No handling for writes to msg_handle (notify-only for writes to CCCD, auto-handled)
         else {
             ESP_LOGW(TAG, "Unexpected write to handle %d", attr_handle);
         }
@@ -448,9 +496,16 @@ static int ble_provisioning_access_cb(uint16_t conn_handle, uint16_t attr_handle
 static void ble_host_task(void *param)
 {
     ESP_LOGI(TAG, "BLE Host Task Started (Persistent Mode)");
-    nimble_port_run();  // Loops forever; stops only on explicit nimble_port_stop() if ever needed
+    
+    // The correct function to run the NimBLE event loop in ESP-IDF
+    nimble_port_run();
+
     ESP_LOGI(TAG, "BLE Host Task stopped.");
-    // No auto-reboot; task ends if stopped
+    // Free the queue and semaphore if task exits unexpectedly
+    if (notification_queue) { vQueueDelete(notification_queue); notification_queue = NULL; }
+    if (provisioning_sem) { vSemaphoreDelete(provisioning_sem); provisioning_sem = NULL; }
+    ble_host_handle = NULL;
+    vTaskDelete(NULL);
 }
 
 /**
@@ -460,51 +515,56 @@ void ble_provisioning_init(bool blocking)
 {
     ESP_LOGI(TAG, "Starting BLE Provisioning (blocking=%d).", blocking);
 
+    // Initial cleanup/reset of globals
     ble_host_handle = NULL;
     provisioning_sem = NULL;
+    notification_queue = NULL;
     memset(received_ssid, 0, sizeof(received_ssid));
     memset(received_pass, 0, sizeof(received_pass));
     notify_demo_task_handle = NULL;
+    current_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
+    // 1. Create synchronization objects
     provisioning_sem = xSemaphoreCreateBinary();
-    if (provisioning_sem == NULL)
-    {
+    if (provisioning_sem == NULL) {
         ESP_LOGE(TAG, "Failed to create provisioning semaphore");
         return;
     }
+    notification_queue = xQueueCreate(MSG_QUEUE_SIZE, sizeof(notification_msg_t));
+    if (notification_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create notification queue");
+        vSemaphoreDelete(provisioning_sem);
+        return;
+    }
 
+    // 2. Initialize NimBLE port (sets up controller and base host)
     nimble_port_init();
 
-    // Register GATT services BEFORE starting the host
+    // 3. Register GATT services (BEFORE host is synced)
     gatt_svr_init();
 
+    // 4. Set host synchronization callback
     ble_hs_cfg.sync_cb = ble_hs_sync_cb;
 
-    // Start the BLE host task (if not already running)
-    if (ble_host_handle == NULL)
-    {
+    // 5. Start the BLE host task
+    if (ble_host_handle == NULL) {
+        // Use a static size or a config macro for stack size
         xTaskCreate(ble_host_task, "ble_host", 8192, NULL, 5, &ble_host_handle);
     }
 
-    // Only block if requested (for initial provisioning)
-    if (blocking)
-    {
+    // 6. Blocking wait if requested
+    if (blocking) {
         BaseType_t sem_result = xSemaphoreTake(provisioning_sem, pdMS_TO_TICKS(PROVISIONING_TIMEOUT_MS));
-        if (sem_result == pdTRUE)
-        {
+        if (sem_result == pdTRUE) {
             ESP_LOGI(TAG, "Provisioning completed successfully");
+        } else {
+            ESP_LOGE(TAG, "Provisioning timed out. BLE remains active.");
         }
-        else
-        {
-            ESP_LOGE(TAG, "Provisioning timed out after 5 minutes. BLE remains active for future connections.");
-            // Don't stop stack; keep persistent
-        }
-
-        // Don't delete sem here; keep for potential future use or delete only on full shutdown
-        // vSemaphoreDelete(provisioning_sem);  // Comment out to persist
+        // Provisioning attempt is over; we can delete the semaphore
+        vSemaphoreDelete(provisioning_sem);
         provisioning_sem = NULL;
     }
-    // Else: Non-blocking, return immediately; task runs forever
+    // Else: Non-blocking, task runs forever
 }
 
 #ifdef __cplusplus
