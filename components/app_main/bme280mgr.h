@@ -9,6 +9,9 @@
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "bme280.h"  // Espressif component
+#include <esp_lcd_panel_io.h>
+#include <esp_lcd_panel_ops.h>
+#include <esp_lcd_panel_vendor.h>
 
 extern struct bme280_data comp_data;
 

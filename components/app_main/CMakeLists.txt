@@ -13,6 +13,7 @@ idf_component_register(
         esp32-shared 
         esp_http_server
         esp_timer
+        esp_lcd
         fatfs
         driver 
         bme280         

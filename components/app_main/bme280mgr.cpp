@@ -1,20 +1,35 @@
 #include "bme280mgr.h"
 #include "ble_provisioning.h"
+#include <stdio.h>
+#include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_lcd_panel_io.h>
+#include <esp_lcd_panel_ops.h>
+#include <esp_lcd_panel_vendor.h>
+#include <esp_err.h>
+#include <esp_log.h>
+#include <driver/i2c.h>
+#include <driver/gpio.h>
 
 static const char *TAG = "BME280";
 
+// BME280 I2C Configuration
 #define I2C_MASTER_NUM I2C_NUM_0
 #define I2C_MASTER_SDA_IO 10 // Check your physical wiring
 #define I2C_MASTER_SCL_IO 11 // Check your physical wiring
 #define I2C_MASTER_FREQ_HZ 100000
 #define BME280_I2C_ADDR 0x77 // Default, try 0x76 if 0x77 fails
 
-#define I2C_MASTER_ACK 0
-#define I2C_MASTER_NACK 1
+// OLED I2C Configuration
+#define I2C_OLED_NUM I2C_NUM_1
+#define I2C_OLED_SDA_IO 4
+#define I2C_OLED_SCL_IO 5
+#define I2C_OLED_FREQ_HZ 400000 // OLED can run faster
+#define SSD1306_ADDR 0x3C       // Common; scanner will confirm 0x3C or 0x3D
 
 #define SUCCESS 0
 #define BME280_INIT_VALUE -1
-#define SAMPLE_COUNT UINT8_C(50)
 
 // =================================================================
 // BME280 DRIVER INTERFACE DEFINITIONS
@@ -29,31 +44,149 @@ typedef uint32_t u32;
 static struct bme280_dev bme280_dev;
 struct bme280_data comp_data;
 
+// Display resolution
+#define LCD_H_RES 128
+#define LCD_V_RES 64
+
+// Pixel buffer (1 bit per pixel, 8 pixels per byte; row-major)
+static uint8_t lcd_buffer[LCD_H_RES * LCD_V_RES / 8];
+
+// OLED Globals
+static esp_lcd_panel_io_handle_t oled_io_handle = NULL;
+static esp_lcd_panel_handle_t oled_panel_handle = NULL;
+
 // =================================================================
-// ESP-IDF I2C ABSTRACTION FUNCTIONS (Your previous correct code)
+// I2C INITIALIZATION (Legacy API for both buses)
 // =================================================================
 
 void i2c_master_init(void)
 {
-    i2c_config_t conf = {};
-    conf.mode = I2C_MODE_MASTER;
-    conf.sda_io_num = I2C_MASTER_SDA_IO;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE; // Recommended change
-    conf.scl_io_num = I2C_MASTER_SCL_IO;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE; // Recommended change
-    conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
+    // BME280 Bus (I2C_NUM_0)
+    i2c_config_t conf_bme = {};
+    conf_bme.mode = I2C_MODE_MASTER;
+    conf_bme.sda_io_num = I2C_MASTER_SDA_IO;
+    conf_bme.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    conf_bme.scl_io_num = I2C_MASTER_SCL_IO;
+    conf_bme.scl_pullup_en = GPIO_PULLUP_ENABLE;
+    conf_bme.master.clk_speed = I2C_MASTER_FREQ_HZ;
 
-    // *** MODIFICATION HERE ***
-    // Delete the driver if it was already installed, for a clean restart
     i2c_driver_delete(I2C_MASTER_NUM);
-    // *** END MODIFICATION ***
-
-    ESP_ERROR_CHECK(i2c_param_config(I2C_MASTER_NUM, &conf));
+    ESP_ERROR_CHECK(i2c_param_config(I2C_MASTER_NUM, &conf_bme));
     ESP_ERROR_CHECK(i2c_driver_install(I2C_MASTER_NUM, I2C_MODE_MASTER, 0, 0, 0));
-    ESP_LOGI(TAG, "I2C initialized on SDA:%d, SCL:%d", I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO);
+    ESP_LOGI(TAG, "BME I2C initialized on SDA:%d, SCL:%d", I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO);
+
+    // OLED Bus (I2C_NUM_1)
+    i2c_config_t conf_oled = {};
+    conf_oled.mode = I2C_MODE_MASTER;
+    conf_oled.sda_io_num = I2C_OLED_SDA_IO;
+    conf_oled.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    conf_oled.scl_io_num = I2C_OLED_SCL_IO;
+    conf_oled.scl_pullup_en = GPIO_PULLUP_ENABLE;
+    conf_oled.master.clk_speed = I2C_OLED_FREQ_HZ;
+
+    i2c_driver_delete(I2C_OLED_NUM);
+    ESP_ERROR_CHECK(i2c_param_config(I2C_OLED_NUM, &conf_oled));
+    ESP_ERROR_CHECK(i2c_driver_install(I2C_OLED_NUM, I2C_MODE_MASTER, 0, 0, 0));
+    ESP_LOGI(TAG, "OLED I2C initialized on SDA:%d, SCL:%d", I2C_OLED_SDA_IO, I2C_OLED_SCL_IO);
 }
 
-// Bosch I2C write (v3 API: reg_addr, data, len, intf_ptr)
+void oled_init(void)
+{
+    ESP_LOGI(TAG, "Install panel IO (legacy)");
+    esp_lcd_panel_io_i2c_config_t io_config = {};
+    io_config.dev_addr = SSD1306_ADDR;
+    io_config.control_phase_bytes = 1; // 1 byte for command
+    io_config.lcd_cmd_bits = 8;
+    io_config.lcd_param_bits = 8;
+    io_config.dc_bit_offset = 6;
+    io_config.flags = {
+        .disable_control_phase = false,
+    };
+    esp_err_t ret = esp_lcd_new_panel_io_i2c_v1((uint32_t)I2C_OLED_NUM, &io_config, &oled_io_handle);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to create panel IO: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ESP_LOGI(TAG, "Install SSD1306 panel driver");
+    esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = -1,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        .bits_per_pixel = 1,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(oled_io_handle, &panel_config, &oled_panel_handle));
+
+    ESP_LOGI(TAG, "Panel reset, init and turn on");
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(oled_panel_handle));
+ //   ESP_ERROR_CHECK(esp_lcd_panel_init(oled_panel_handle));
+ //   ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(oled_panel_handle, true));
+ //   ESP_ERROR_CHECK(esp_lcd_panel_invert_color(oled_panel_handle, true));
+
+ //   memset(lcd_buffer, 0xFF, sizeof(lcd_buffer));
+ //   ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(oled_panel_handle, 0, 0, LCD_H_RES, LCD_V_RES, lcd_buffer));
+
+    ESP_LOGI(TAG, "OLED initialized");
+}
+
+void oled_update_display(float temp, float hum, float press)
+{
+    memset(lcd_buffer, 0xFF, sizeof(lcd_buffer));
+
+    // Temp bar
+    int h_temp = (int)((temp > 0 ? temp : 0) / 50.0f * LCD_V_RES);
+    h_temp = (h_temp > LCD_V_RES) ? LCD_V_RES : h_temp;
+    for (int y = 0; y < h_temp; ++y)
+    {
+        for (int x = 5; x < 35; ++x)
+        {
+            if (x >= LCD_H_RES)
+                continue;
+            int byte_idx = (y / 8) * LCD_H_RES + x;
+            int bit_idx = y % 8;
+            lcd_buffer[byte_idx] &= ~(1u << bit_idx);
+        }
+    }
+
+    // Hum bar
+    int h_hum = (int)(hum / 100.0f * LCD_V_RES);
+    h_hum = (h_hum > LCD_V_RES) ? LCD_V_RES : h_hum;
+    for (int y = 0; y < h_hum; ++y)
+    {
+        for (int x = 40; x < 70; ++x)
+        {
+            if (x >= LCD_H_RES)
+                continue;
+            int byte_idx = (y / 8) * LCD_H_RES + x;
+            int bit_idx = y % 8;
+            lcd_buffer[byte_idx] &= ~(1u << bit_idx);
+        }
+    }
+
+    // Press bar
+    float p_hpa = press / 100.0f;
+    float p_norm = (p_hpa - 900.0f) / 200.0f;
+    int h_press = (int)(p_norm * LCD_V_RES);
+    h_press = (h_press < 0) ? 0 : (h_press > LCD_V_RES ? LCD_V_RES : h_press);
+    for (int y = 0; y < h_press; ++y)
+    {
+        for (int x = 75; x < 105; ++x)
+        {
+            if (x >= LCD_H_RES)
+                continue;
+            int byte_idx = (y / 8) * LCD_H_RES + x;
+            int bit_idx = y % 8;
+            lcd_buffer[byte_idx] &= ~(1u << bit_idx);
+        }
+    }
+
+    if (oled_panel_handle)
+    {
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(oled_panel_handle, 0, 0, LCD_H_RES, LCD_V_RES, lcd_buffer));
+    }
+}
+
+// Bosch I2C functions (legacy)
 s8 BME280_I2C_bus_write(u8 reg_addr, const u8 *data, u32 len, void *intf_ptr)
 {
     (void)intf_ptr;
@@ -83,7 +216,6 @@ s8 BME280_I2C_bus_write(u8 reg_addr, const u8 *data, u32 len, void *intf_ptr)
     return (s8)iError;
 }
 
-// Bosch I2C read (v3 API: reg_addr, data, len, intf_ptr)
 s8 BME280_I2C_bus_read(u8 reg_addr, u8 *data, u32 len, void *intf_ptr)
 {
     (void)intf_ptr;
@@ -92,30 +224,22 @@ s8 BME280_I2C_bus_read(u8 reg_addr, u8 *data, u32 len, void *intf_ptr)
 
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
 
-    // 1. Send Register Address (Write Phase)
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (BME280_I2C_ADDR << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, reg_addr, true);
 
-    // 2. REPEATED START
     i2c_master_start(cmd);
-
-    // 3. Send Slave Address + READ bit
     i2c_master_write_byte(cmd, (BME280_I2C_ADDR << 1) | I2C_MASTER_READ, true);
 
-    // 4. Read Data
     if (len > 0)
     {
-        // Read all but the last byte with ACK
         if (len > 1)
         {
-            i2c_master_read(cmd, data, len - 1, (i2c_ack_type_t)I2C_MASTER_ACK);
+            i2c_master_read(cmd, data, len - 1, I2C_MASTER_ACK);
         }
-        // Read the last byte with NACK
-        i2c_master_read_byte(cmd, data + len - 1, (i2c_ack_type_t)I2C_MASTER_NACK);
+        i2c_master_read_byte(cmd, data + len - 1, I2C_MASTER_NACK);
     }
 
-    // 5. Stop
     i2c_master_stop(cmd);
 
     espRc = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(1000));
@@ -131,48 +255,59 @@ s8 BME280_I2C_bus_read(u8 reg_addr, u8 *data, u32 len, void *intf_ptr)
     return (s8)iError;
 }
 
-// Bosch delay (v3 API)
 void BME280_delay_usec(u32 usec, void *intf_ptr)
 {
     (void)intf_ptr;
-    // For delays < 1ms, using esp_rom_delay_us is more accurate,
-    // but for application tasks, vTaskDelay (FreeRTOS) is better.
-    // The BME280 delay is usually for measurement time (~1-10ms), so vTaskDelay is safer.
     u32 ms = (usec + 999) / 1000;
     if (ms == 0)
-    {
-        ms = 1; // Ensure at least one tick delay if time is very short
-    }
+        ms = 1;
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
+// =================================================================
+// I2C SCANNER (Legacy for both buses)
+// =================================================================
+
 void i2c_scanner(void)
 {
-    ESP_LOGI(TAG, "Simple I2C scanner starting...");
+    ESP_LOGI(TAG, "Scanning I2C buses...");
 
-    for (uint8_t addr = 0x08; addr <= 0x77; addr++)
+    // BME Bus
+    ESP_LOGI(TAG, "BME Bus (I2C_NUM_0):");
+    for (uint8_t addr = 0x08; addr <= 0x77; ++addr)
     {
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
         i2c_master_start(cmd);
         i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
         i2c_master_stop(cmd);
-
-        esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(50));
-        i2c_cmd_link_delete(cmd);
-
-        if (ret == ESP_OK)
+        if (i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(100)) == ESP_OK)
         {
-            ESP_LOGI(TAG, "Found device at: 0x%02X", addr);
+            ESP_LOGI(TAG, "  Found at 0x%02X", addr);
         }
+        i2c_cmd_link_delete(cmd);
+    }
+
+    // OLED Bus
+    ESP_LOGI(TAG, "OLED Bus (I2C_NUM_1):");
+    for (uint8_t addr = 0x08; addr <= 0x77; ++addr)
+    {
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_stop(cmd);
+        if (i2c_master_cmd_begin(I2C_OLED_NUM, cmd, pdMS_TO_TICKS(100)) == ESP_OK)
+        {
+            ESP_LOGI(TAG, "  Found at 0x%02X", addr);
+        }
+        i2c_cmd_link_delete(cmd);
     }
     ESP_LOGI(TAG, "Scan complete");
 }
 
 // =================================================================
-// BME280 SENSOR LOGIC (Adapted from your example code)
+// BME280 SENSOR LOGIC
 // =================================================================
 
-// Helper function to print results (since we can't use bme280_error_codes_print_result)
 static void print_rslt(const char *func, int8_t rslt)
 {
     if (rslt != SUCCESS)
@@ -185,73 +320,56 @@ static void print_rslt(const char *func, int8_t rslt)
     }
 }
 
-static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
+static int8_t read_sensor_data(uint32_t period, struct bme280_dev *dev)
 {
-    int8_t rslt = SUCCESS;
-    int8_t idx = 0;
+    int8_t rslt;
     uint8_t status_reg;
+    char msg[100];
 
-    while (idx < SAMPLE_COUNT)
+    rslt = bme280_get_regs(BME280_REG_STATUS, &status_reg, 1, dev);
+    print_rslt("bme280_get_regs", rslt);
+    if (rslt != SUCCESS)
     {
-        // Read status register to check if measurement is done
-        rslt = bme280_get_regs(BME280_REG_STATUS, &status_reg, 1, dev);
-        print_rslt("bme280_get_regs", rslt);
-        if (rslt != SUCCESS)
-        {
-            vTaskDelay(pdMS_TO_TICKS(1000)); // Wait before retrying on hard error
-            continue;
-        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        return rslt;
+    }
 
-        // Check the 'measuring' bit (bit 3). If 0, measurement is complete.
-        if (!(status_reg & BME280_STATUS_MEAS_DONE))
-        {
-            // If the measurement isn't done, wait for the calculated time
-            dev->delay_us(period, dev->intf_ptr);
-        }
+    if (status_reg & (1 << 3))
+    {
+        dev->delay_us(period, dev->intf_ptr);
+    }
 
-        /* Read compensated data */
-        rslt = bme280_get_sensor_data(BME280_HUM, &comp_data, dev);
-        print_rslt("bme280_get_sensor_data", rslt);
+    rslt = bme280_get_sensor_data(BME280_ALL, &comp_data, dev);
+    print_rslt("bme280_get_sensor_data", rslt);
 
-        if (rslt == SUCCESS)
-        {
-// The scaling is needed when BME280_DOUBLE_ENABLE is NOT defined
-// because the compensated value is returned in 1000*RH% in integer mode.
+    if (rslt == SUCCESS)
+    {
 #ifndef BME280_DOUBLE_ENABLE
-            comp_data.humidity = comp_data.humidity / 1000;
-#endif
-
-            char msg[50];
-
-#ifdef BME280_DOUBLE_ENABLE
-            ESP_LOGI(TAG, "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
-            snprintf(msg, sizeof(msg), "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
-
+        float temperature = (float)comp_data.temperature / 100.0f;
+        float humidity = (float)comp_data.humidity / 1000.0f;
+        float pressure = (float)comp_data.pressure / 256.0f;
 #else
-            ESP_LOGI(TAG, "Humidity[%d]:   %lu %%RH", idx, (long unsigned int)comp_data.humidity);
+        float temperature = comp_data.temperature;
+        float humidity = comp_data.humidity;
+        float pressure = comp_data.pressure;
 #endif
+        snprintf(msg, sizeof(msg), "T:%.1fC H:%.1f%% P:%.1fhPa", temperature, humidity, pressure / 100.0f);
+        ESP_LOGI(TAG, "%s", msg);
+        send_notification_safe(msg);
 
-            // Use the safe queue wrapper which now uses the global conn_handle internally
-            send_notification_safe(msg);
-
-            // idx++;
-        }
-
-        // Add a small delay for good measure in a FreeRTOS loop
-        vTaskDelay(pdMS_TO_TICKS(5000));
+       // oled_update_display(temperature, humidity, pressure);
     }
 
     return rslt;
 }
 
-// Task wrapper for the main sensor loop
-void humidity_reader_task(void *)
+void sensor_reader_task(void *pvParameters)
 {
+    (void)pvParameters;
     int8_t rslt;
     uint32_t period;
-    struct bme280_settings settings;
+    struct bme280_settings settings; // Note: use bme280_settings, not bme280_settings
 
-    // Get current settings before modifying
     rslt = bme280_get_sensor_settings(&settings, &bme280_dev);
     print_rslt("bme280_get_sensor_settings", rslt);
     if (rslt != SUCCESS)
@@ -260,7 +378,6 @@ void humidity_reader_task(void *)
         return;
     }
 
-    /* Configuring the over-sampling rate, filter coefficient and standby time */
     settings.filter = BME280_FILTER_COEFF_2;
     settings.osr_h = BME280_OVERSAMPLING_1X;
     settings.osr_p = BME280_OVERSAMPLING_1X;
@@ -275,7 +392,6 @@ void humidity_reader_task(void *)
         return;
     }
 
-    /* Always set the power mode after setting the configuration */
     rslt = bme280_set_sensor_mode(BME280_POWERMODE_NORMAL, &bme280_dev);
     print_rslt("bme280_set_power_mode", rslt);
     if (rslt != SUCCESS)
@@ -284,7 +400,6 @@ void humidity_reader_task(void *)
         return;
     }
 
-    /* Calculate measurement time in microseconds */
     rslt = bme280_cal_meas_delay(&period, &settings);
     print_rslt("bme280_cal_meas_delay", rslt);
     if (rslt != SUCCESS)
@@ -293,12 +408,15 @@ void humidity_reader_task(void *)
         return;
     }
 
-    ESP_LOGI(TAG, "Measurement time : %lu us", (long unsigned int)period);
-    ESP_LOGI(TAG, "Starting %d humidity samples...", SAMPLE_COUNT);
+    ESP_LOGI(TAG, "Measurement time: %lu us", period);
+    ESP_LOGI(TAG, "Starting continuous readings...");
 
-    get_humidity(period, &bme280_dev);
+    while (1)
+    {
+        read_sensor_data(period, &bme280_dev);
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
 
-    ESP_LOGI(TAG, "Humidity sampling complete");
     vTaskDelete(NULL);
 }
 
@@ -307,19 +425,19 @@ void humidity_start(void)
     ESP_LOGI(TAG, "Starting BME280 with Bosch driver v3 on ESP32-S3");
 
     i2c_master_init();
-    vTaskDelay(pdMS_TO_TICKS(100)); // Short delay after init
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-    // Simple scan helps confirm wiring/address before driver init
     i2c_scanner();
 
-    // Setup dev struct - replaces bme280_interface_selection
+    oled_init();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     bme280_dev.intf = BME280_I2C_INTF;
     bme280_dev.read = BME280_I2C_bus_read;
     bme280_dev.write = BME280_I2C_bus_write;
     bme280_dev.delay_us = BME280_delay_usec;
     bme280_dev.intf_ptr = NULL;
 
-    // Init
     s32 com_rslt = bme280_init(&bme280_dev);
     print_rslt("bme280_init", com_rslt);
 
@@ -330,5 +448,5 @@ void humidity_start(void)
     }
     ESP_LOGI(TAG, "BME280 successfully initialized.");
 
-    xTaskCreate(humidity_reader_task, "humidity_reader", 4096, NULL, 5, NULL);
+    xTaskCreate(sensor_reader_task, "sensor_reader", 4096, NULL, 5, NULL);
 }
