@@ -91,6 +91,7 @@ static void ble_prov_advertise(void);
 static int ble_gap_event_cb(struct ble_gap_event *event, void *arg);
 static int send_message_notification(uint16_t conn_handle, const char* msg);
 static void notify_demo_task(void* param);
+void send_notification_safe(const char* msg); // Updated signature
 
 // Demo task handle (optional, for cleanup)
 static TaskHandle_t notify_demo_task_handle = NULL;
@@ -111,7 +112,15 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "Connection established; status=%d", event->connect.status);
         if (event->connect.status == 0) {
             current_conn_handle = event->connect.conn_handle;  // Update global
-            // Start a demo notifier task
+
+            // CRITICAL FIX: Ensure any old task is deleted before starting a new one.
+            if (notify_demo_task_handle != NULL) {
+                ESP_LOGW(TAG, "Deleting stale notification task before creating new one.");
+                vTaskDelete(notify_demo_task_handle);
+                notify_demo_task_handle = NULL;
+            }
+
+            // Start a demo notifier task, passing the conn_handle as a parameter
             xTaskCreate(notify_demo_task, "notify_demo", 8192, (void*)(uintptr_t)event->connect.conn_handle, 3, &notify_demo_task_handle);
         }
         break;
@@ -119,10 +128,14 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "Connection lost; reason=%d", event->disconnect.reason);
         current_conn_handle = BLE_HS_CONN_HANDLE_NONE;  // Clear global
+
+        // CRITICAL FIX: Ensure task is deleted and handle is reset to NULL
         if (notify_demo_task_handle != NULL) {
             vTaskDelete(notify_demo_task_handle);
             notify_demo_task_handle = NULL;
+            ESP_LOGI(TAG, "Notification task deleted successfully.");
         }
+
         // Restart advertising if provisioning is not yet complete
         if (provisioning_sem != NULL && uxSemaphoreGetCount(provisioning_sem) == 0) {
             ESP_LOGI(TAG, "Restarting advertising after disconnect...");
@@ -358,8 +371,7 @@ static int send_message_notification(uint16_t conn_handle, const char* msg) {
     int rc = ble_gatts_notify_custom(conn_handle, msg_handle, mbuf);
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to send notification; rc=%d", rc);
-        // Note: mbuf ownership is transferred on success, but must be freed on error
-        // FIX: Replaced ble_hs_mbuf_free with os_mbuf_free
+        // FIX: Use os_mbuf_free (NimBLE OSAL) instead of the wrapper ble_hs_mbuf_free
         os_mbuf_free(mbuf);
     } else {
         ESP_LOGI(TAG, "Sent notification: %s", msg);
@@ -370,16 +382,16 @@ static int send_message_notification(uint16_t conn_handle, const char* msg) {
 
 /**
  * @brief Safe wrapper to send notifications from other tasks (posts to queue).
- * This function retrieves the connection handle from the global state.
+ * This uses the globally tracked connection handle.
  * @param msg: Null-terminated string to send
  */
-void send_notification_safe(const char* msg) { 
+void send_notification_safe(const char* msg) {
     if (notification_queue == NULL) {
         ESP_LOGE(TAG, "Notification queue not initialized");
         return;
     }
-    
-    // Retrieve the handle from the global variable
+
+    // Get the current connection handle from the global state
     uint16_t conn_handle = current_conn_handle; 
 
     if (conn_handle == BLE_HS_CONN_HANDLE_NONE) {
@@ -389,11 +401,10 @@ void send_notification_safe(const char* msg) {
 
 
     notification_msg_t queue_msg;
-    queue_msg.conn_handle = conn_handle; // Use the retrieved handle
+    queue_msg.conn_handle = conn_handle;
     strncpy(queue_msg.msg, msg, sizeof(queue_msg.msg) - 1);
     queue_msg.msg[sizeof(queue_msg.msg) - 1] = '\0';
 
-    // Must check if calling from ISR for xQueueSend. Use xQueueSendFromISR if needed.
     if (xQueueSend(notification_queue, &queue_msg, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Notification queue full; dropped message: %s", msg);
     }
@@ -403,19 +414,18 @@ void send_notification_safe(const char* msg) {
  * @brief Demo task to send periodic notifications (for testing).
  */
 static void notify_demo_task(void* param) {
-  //  uint16_t conn_handle = (uint16_t)(uintptr_t)param;
+    // Note: param is the conn_handle, but we will use the global handle
     int counter = 0;
     while (1) {  // Run until disconnect (handled in gap_cb)
         
         char msg[50];
         snprintf(msg, sizeof(msg), "Demo event #%d: Hello from ESP32!", ++counter);
         
-        // Use the safe queue wrapper to send the message from the non-BLE-host task
+        // Use the safe queue wrapper which now uses the global conn_handle internally
         send_notification_safe(msg);
         
         vTaskDelay(pdMS_TO_TICKS(5000));  // Every 5s
     }
-    // Task is typically deleted by gap_cb on disconnect, but keep vTaskDelete(NULL) here for completeness if loop breaks
     vTaskDelete(NULL); 
 }
 
