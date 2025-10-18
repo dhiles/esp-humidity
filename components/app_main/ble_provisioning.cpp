@@ -90,11 +90,7 @@ static int ble_provisioning_access_cb(uint16_t conn_handle, uint16_t attr_handle
 static void ble_prov_advertise(void);
 static int ble_gap_event_cb(struct ble_gap_event *event, void *arg);
 static int send_message_notification(uint16_t conn_handle, const char* msg);
-static void notify_demo_task(void* param);
-void send_notification_safe(const char* msg); // Updated signature
-
-// Demo task handle (optional, for cleanup)
-static TaskHandle_t notify_demo_task_handle = NULL;
+static void notification_consumer_task(void* param); // New consumer task declaration
 
 static void format_addr(char *buf, const uint8_t *addr)
 {
@@ -112,29 +108,13 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "Connection established; status=%d", event->connect.status);
         if (event->connect.status == 0) {
             current_conn_handle = event->connect.conn_handle;  // Update global
-
-            // CRITICAL FIX: Ensure any old task is deleted before starting a new one.
-            if (notify_demo_task_handle != NULL) {
-                ESP_LOGW(TAG, "Deleting stale notification task before creating new one.");
-                vTaskDelete(notify_demo_task_handle);
-                notify_demo_task_handle = NULL;
-            }
-
-            // Start a demo notifier task, passing the conn_handle as a parameter
-            xTaskCreate(notify_demo_task, "notify_demo", 8192, (void*)(uintptr_t)event->connect.conn_handle, 3, &notify_demo_task_handle);
+            // NOTE: No specific task is started here; the consumer task processes the queue
         }
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "Connection lost; reason=%d", event->disconnect.reason);
         current_conn_handle = BLE_HS_CONN_HANDLE_NONE;  // Clear global
-
-        // CRITICAL FIX: Ensure task is deleted and handle is reset to NULL
-        if (notify_demo_task_handle != NULL) {
-            vTaskDelete(notify_demo_task_handle);
-            notify_demo_task_handle = NULL;
-            ESP_LOGI(TAG, "Notification task deleted successfully.");
-        }
 
         // Restart advertising if provisioning is not yet complete
         if (provisioning_sem != NULL && uxSemaphoreGetCount(provisioning_sem) == 0) {
@@ -380,6 +360,36 @@ static int send_message_notification(uint16_t conn_handle, const char* msg) {
     return rc;
 }
 
+// --- NEW CODE: Notification Queue Consumer Task ---
+
+/**
+ * @brief Task responsible for receiving messages from the notification_queue
+ * and calling the NimBLE API to send the notification.
+ */
+static void notification_consumer_task(void* param) {
+    notification_msg_t queue_msg;
+    ESP_LOGI(TAG, "Notification Consumer Task started, waiting for messages...");
+
+    while (1) {
+        // Block indefinitely until a message is received on the queue
+        if (xQueueReceive(notification_queue, &queue_msg, portMAX_DELAY) == pdTRUE) {
+            
+            // Check if the connection handle is still valid before trying to send
+            if (current_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+                // Use the handle stored in the message to send the notification
+                send_message_notification(queue_msg.conn_handle, queue_msg.msg);
+            } else {
+                ESP_LOGW(TAG, "Dropped notification: No active connection.");
+            }
+        }
+    }
+    // Task should ideally run indefinitely, but safety exit is good practice
+    vTaskDelete(NULL); 
+}
+
+// --- END NEW CODE ---
+
+
 /**
  * @brief Safe wrapper to send notifications from other tasks (posts to queue).
  * This uses the globally tracked connection handle.
@@ -408,25 +418,6 @@ void send_notification_safe(const char* msg) {
     if (xQueueSend(notification_queue, &queue_msg, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Notification queue full; dropped message: %s", msg);
     }
-}
-
-/**
- * @brief Demo task to send periodic notifications (for testing).
- */
-static void notify_demo_task(void* param) {
-    // Note: param is the conn_handle, but we will use the global handle
-    int counter = 0;
-    while (1) {  // Run until disconnect (handled in gap_cb)
-        
-        char msg[50];
-        snprintf(msg, sizeof(msg), "Demo event #%d: Hello from ESP32!", ++counter);
-        
-        // Use the safe queue wrapper which now uses the global conn_handle internally
-        send_notification_safe(msg);
-        
-        vTaskDelay(pdMS_TO_TICKS(5000));  // Every 5s
-    }
-    vTaskDelete(NULL); 
 }
 
 /**
@@ -531,7 +522,6 @@ void ble_provisioning_init(bool blocking)
     notification_queue = NULL;
     memset(received_ssid, 0, sizeof(received_ssid));
     memset(received_pass, 0, sizeof(received_pass));
-    notify_demo_task_handle = NULL;
     current_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
     // 1. Create synchronization objects
@@ -561,8 +551,11 @@ void ble_provisioning_init(bool blocking)
         // Use a static size or a config macro for stack size
         xTaskCreate(ble_host_task, "ble_host", 8192, NULL, 5, &ble_host_handle);
     }
+    
+    // 6. Start the Notification Consumer Task (runs forever to process the queue)
+    xTaskCreate(notification_consumer_task, "notify_consumer", 4096, NULL, 4, NULL);
 
-    // 6. Blocking wait if requested
+    // 7. Blocking wait if requested
     if (blocking) {
         BaseType_t sem_result = xSemaphoreTake(provisioning_sem, pdMS_TO_TICKS(PROVISIONING_TIMEOUT_MS));
         if (sem_result == pdTRUE) {

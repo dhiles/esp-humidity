@@ -30,6 +30,8 @@
 #include "bme280mgr.h"
 
 static const char *TAG = "MAIN";
+// Demo task handle (optional, for cleanup)
+static TaskHandle_t notify_demo_task_handle = NULL;
 
 static void check_psram(void)
 {
@@ -43,6 +45,23 @@ static void check_psram(void)
     {
         ESP_LOGE(TAG, "PSRAM not initialized!");
     }
+}
+
+void notify_demo_task(void *param)
+{
+    int counter = 0;
+    while (1)
+    { // Run until disconnect (handled in gap_cb)
+
+        char msg[50];
+        snprintf(msg, sizeof(msg), "notify_demo_task #%d: Hello from ESP32!", ++counter);
+
+        // Use the safe queue wrapper which now uses the global conn_handle internally
+        send_notification_safe(msg);
+      //  ESP_LOGI(TAG, msg);
+        vTaskDelay(pdMS_TO_TICKS(5000)); // Every 5s
+    }
+    vTaskDelete(NULL);
 }
 
 // =================================================================
@@ -61,7 +80,7 @@ extern "C" void app_main(void)
     MyWiFi::global_init();
 
     // Start BLE provisioning service persistently (non-blocking)
-    ble_provisioning_init(false);  // Modified to take bool blocking param; starts task without waiting
+    ble_provisioning_init(false); // Modified to take bool blocking param; starts task without waiting
 
     // Initial Wi-Fi connection attempt
     esp_err_t wifi_ret = MyWiFi::connectWithBackoff("");
@@ -74,12 +93,12 @@ extern "C" void app_main(void)
         if (sem_result == pdTRUE)
         {
             ESP_LOGI(TAG, "Provisioning completed. Retrying Wi-Fi connection...");
-            wifi_ret = MyWiFi::connectWithBackoff("");  // Reload fresh credentials
+            wifi_ret = MyWiFi::connectWithBackoff(""); // Reload fresh credentials
         }
         else
         {
             ESP_LOGE(TAG, "Provisioning timed out. Continuing without Wi-Fi (BLE still active for future connections).");
-            wifi_ret = ESP_FAIL;  // Keep as failure to skip further steps if desired
+            wifi_ret = ESP_FAIL; // Keep as failure to skip further steps if desired
         }
     }
 
@@ -97,11 +116,13 @@ extern "C" void app_main(void)
         ESP_LOGW(TAG, "Skipping NTP/webserver due to Wi-Fi failure. BLE remains available for provisioning/notifications.");
     }
 
+    xTaskCreate(notify_demo_task, "notify_demo", 8192, NULL, 3, &notify_demo_task_handle);
+
     // Main task now idles; BLE host task runs persistently in background
     // You can add periodic tasks here if needed, e.g., to send notifications via BLE
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(10000));  // Idle loop
+        vTaskDelay(pdMS_TO_TICKS(10000)); // Idle loop
         // Example: If you have a connected BLE device, send a status message
         // send_message_notification(some_conn_handle, "WiFi Status: Connected");
     }
