@@ -24,9 +24,11 @@ extern "C" {
 #include "nvs_credentials.h"
 #include <freertos/semphr.h>
 
+#define PROVISIONING_TIMEOUT_MS 600000 // 10 minutes timeout
+
 extern SemaphoreHandle_t provisioning_sem;
 
-void ble_provisioning_init(void);
+void ble_provisioning_init(bool blocking);
 
 #undef min
 #undef max

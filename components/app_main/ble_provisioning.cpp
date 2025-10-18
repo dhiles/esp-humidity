@@ -23,7 +23,6 @@ extern "C"
 // void nvs_save_credentials(const char *ssid, const char *pass);
 
 #define DEVICE_NAME "ESP32-PROV"
-#define PROVISIONING_TIMEOUT_MS 600000 // 5 minutes timeout
 
 static const char *TAG = "BLE_PROV";
 
@@ -95,7 +94,7 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "Connection established; status=%d", event->connect.status);
         if (event->connect.status == 0) {
             // Start a demo notifier task
-            xTaskCreate(notify_demo_task, "notify_demo", 2048, (void*)(uintptr_t)event->connect.conn_handle, 3, &notify_demo_task_handle);
+            xTaskCreate(notify_demo_task, "notify_demo", 8192, (void*)(uintptr_t)event->connect.conn_handle, 3, &notify_demo_task_handle);
         }
         break;
 
@@ -425,14 +424,14 @@ static int ble_provisioning_access_cb(uint16_t conn_handle, uint16_t attr_handle
             // nvs_save_credentials(received_ssid, received_pass);
             // ----------------------------------------------------------------------
 
-            ESP_LOGI(TAG, "Credentials processed. Signaling completion and stopping BLE...");
+            ESP_LOGI(TAG, "Credentials processed. Signaling completion...");
 
             if (provisioning_sem != NULL)
             {
                 xSemaphoreGive(provisioning_sem);
             }
             ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-            nimble_port_stop();
+            // Note: No nimble_port_stop(); -- Keep BLE running persistently
         }
         // Note: No handling for writes to msg_handle (notify-only for writes to CCCD, auto-handled)
         else {
@@ -448,19 +447,18 @@ static int ble_provisioning_access_cb(uint16_t conn_handle, uint16_t attr_handle
  */
 static void ble_host_task(void *param)
 {
-    ESP_LOGI(TAG, "BLE Host Task Started");
-    nimble_port_run();
-    ESP_LOGI(TAG, "BLE Host Task completed (stopped). Rebooting in 3 seconds...");
-    vTaskDelay(pdMS_TO_TICKS(3000));
-    esp_restart();
+    ESP_LOGI(TAG, "BLE Host Task Started (Persistent Mode)");
+    nimble_port_run();  // Loops forever; stops only on explicit nimble_port_stop() if ever needed
+    ESP_LOGI(TAG, "BLE Host Task stopped.");
+    // No auto-reboot; task ends if stopped
 }
 
 /**
- * @brief Initializes and runs the NimBLE host task, blocking until provisioning completes or times out.
+ * @brief Initializes and runs the NimBLE host task, optionally blocking until provisioning completes or times out.
  */
-void ble_provisioning_init(void)
+void ble_provisioning_init(bool blocking)
 {
-    ESP_LOGI(TAG, "Starting BLE Provisioning.");
+    ESP_LOGI(TAG, "Starting BLE Provisioning (blocking=%d).", blocking);
 
     ble_host_handle = NULL;
     provisioning_sem = NULL;
@@ -482,31 +480,31 @@ void ble_provisioning_init(void)
 
     ble_hs_cfg.sync_cb = ble_hs_sync_cb;
 
-    // Start the BLE host task
-    xTaskCreate(ble_host_task, "ble_host", 8192, NULL, 5, &ble_host_handle);
-
-    BaseType_t sem_result = xSemaphoreTake(provisioning_sem, pdMS_TO_TICKS(PROVISIONING_TIMEOUT_MS));
-    if (sem_result == pdTRUE)
+    // Start the BLE host task (if not already running)
+    if (ble_host_handle == NULL)
     {
-        ESP_LOGI(TAG, "Provisioning completed successfully");
+        xTaskCreate(ble_host_task, "ble_host", 8192, NULL, 5, &ble_host_handle);
     }
-    else
+
+    // Only block if requested (for initial provisioning)
+    if (blocking)
     {
-        ESP_LOGE(TAG, "Provisioning timed out after 5 minutes. Attempting cleanup...");
-        nimble_port_stop();
-        if (ble_host_handle != NULL)
+        BaseType_t sem_result = xSemaphoreTake(provisioning_sem, pdMS_TO_TICKS(PROVISIONING_TIMEOUT_MS));
+        if (sem_result == pdTRUE)
         {
-            vTaskDelete(ble_host_handle);
-            ble_host_handle = NULL;
+            ESP_LOGI(TAG, "Provisioning completed successfully");
         }
-        if (notify_demo_task_handle != NULL) {
-            vTaskDelete(notify_demo_task_handle);
-            notify_demo_task_handle = NULL;
+        else
+        {
+            ESP_LOGE(TAG, "Provisioning timed out after 5 minutes. BLE remains active for future connections.");
+            // Don't stop stack; keep persistent
         }
-    }
 
-    vSemaphoreDelete(provisioning_sem);
-    provisioning_sem = NULL;
+        // Don't delete sem here; keep for potential future use or delete only on full shutdown
+        // vSemaphoreDelete(provisioning_sem);  // Comment out to persist
+        provisioning_sem = NULL;
+    }
+    // Else: Non-blocking, return immediately; task runs forever
 }
 
 #ifdef __cplusplus
