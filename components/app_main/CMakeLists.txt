@@ -18,6 +18,7 @@ idf_component_register(
         driver 
         bme280         
         bt
+        u8g2
 
     PRIV_REQUIRES
         # Private dependencies
