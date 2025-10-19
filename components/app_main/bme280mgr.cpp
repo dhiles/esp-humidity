@@ -26,6 +26,7 @@ static const char *TAG = "BME280_OLED";
 
 #define SUCCESS 0
 #define BME280_INIT_VALUE -1
+#define SAMPLE_COUNT UINT8_C(50)
 
 // --- Global Handles (Modern API) ---
 i2c_master_bus_handle_t i2c_bus_single = NULL;
@@ -49,40 +50,6 @@ static uint8_t lcd_buffer[LCD_H_RES * LCD_V_RES / 8]; // 1024 bytes (128*64 / 8)
 
 // --- Function Prototypes ---
 void oled_update_display(float temp, float hum, float press);
-
-
-// =================================================================
-// I2C SCAN FUNCTION (Modern API)
-// =================================================================
-
-/**
- * @brief Scans the I2C bus for devices by checking for ACKs across all 7-bit addresses.
- * This uses the i2c_master_probe function, the modern API's dedicated way to check
- * if a device exists and acknowledges its address.
- */
-static void i2c_scan_master_bus(i2c_master_bus_handle_t bus_handle)
-{
-    ESP_LOGI(TAG, "Scanning I2C bus for 7-bit addresses (0x01 to 0x77)...");
-    int count = 0;
-    
-    // Iterate through all possible 7-bit addresses
-    for (int addr = 0x01; addr < 0x78; addr++) {
-        // i2c_master_probe attempts a simple address write/read transaction.
-        // If the device exists and acknowledges its address, ESP_OK is returned.
-        // Timeout increased slightly to be more robust during probing.
-        esp_err_t ret = i2c_master_probe(
-            bus_handle,         // The bus handle
-            (uint8_t)addr,      // The address to probe
-            pdMS_TO_TICKS(50)   // Timeout increased to 50ms
-        );
-
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "  -> Found device at 0x%02X", addr);
-            count++;
-        }
-    }
-    ESP_LOGI(TAG, "I2C Scan finished. %d device(s) found.", count);
-}
 
 
 // =================================================================
@@ -237,13 +204,17 @@ static esp_err_t oled_send_data(const uint8_t *data, size_t len)
 
 /**
  * @brief Draws a single 8x8 character using simple font logic
+ *
+ * FIX: Modified to draw white pixels on a black background for characters.
  */
 static void draw_char(char c, int x_start, int y_start, uint8_t *buffer) {
     if (x_start < 0 || y_start < 0 || x_start + 8 > LCD_H_RES || y_start + 8 > LCD_V_RES) {
         return;
     }
     
-    // Simple drawing: set an 8x8 white block for non-space characters
+    // Only attempt to draw actual character glyphs (e.g., if you had font data)
+    // For this simple placeholder, let's just draw a solid 8x8 block for non-space characters
+    // The key is that we SET bits for white, and ensure the background is cleared (all 0s).
     if (c != ' ') {
         for (int y = y_start; y < y_start + FONT_HEIGHT; y++) {
             for (int x = x_start; x < x_start + 8; x++) {
@@ -253,13 +224,26 @@ static void draw_char(char c, int x_start, int y_start, uint8_t *buffer) {
                     int bit_idx = y % 8;
                     
                     if (byte_idx < sizeof(lcd_buffer)) {
-                        buffer[byte_idx] |= (1u << bit_idx); // Set bit ON
+                        buffer[byte_idx] |= (1u << bit_idx); // Set bit ON (white pixel)
                     }
                 }
             }
         }
     }
+    // If you had actual font data, this is where you'd iterate through it
+    // For example:
+    // const uint8_t *font_glyph = get_font_glyph(c);
+    // if (font_glyph) {
+    //     for (int col = 0; col < 8; col++) {
+    //         for (int row = 0; row < 8; row++) {
+    //             if ((font_glyph[col] >> row) & 0x01) { // Check if pixel is part of the glyph
+    //                 // Set the corresponding bit in lcd_buffer
+    //             }
+    //         }
+    //     }
+    // }
 }
+
 
 /**
  * @brief Draws text using the placeholder font
@@ -309,7 +293,8 @@ void oled_init(void)
     oled_send_cmd(0xDB); // Set VCOM Detect (0x40)
     oled_send_cmd(0x40); 
     oled_send_cmd(0xA4); // Entire Display ON/Resume to RAM content display
-    oled_send_cmd(0xA6); // Normal Display
+    oled_send_cmd(0xA6); // Normal Display (!!! This is the key for white on black)
+    // IMPORTANT: 0xA7 is Inverse Display (black on white)
     oled_send_cmd(0xAF); // Display ON
 
     // Clear the internal buffer and push it to the display
@@ -321,7 +306,7 @@ void oled_init(void)
 
 void oled_update_display(float temp, float hum, float press)
 {
-    // Clear the buffer
+    // Clear the buffer to all black (all bits 0) before drawing
     memset(lcd_buffer, 0x00, sizeof(lcd_buffer));
     
     char temp_str[32];
@@ -369,6 +354,7 @@ static void print_rslt(const char *func, int8_t rslt)
     }
 }
 
+/*
 static int8_t read_sensor_data(uint32_t period, struct bme280_dev *dev)
 {
     int8_t rslt = BME280_INIT_VALUE;
@@ -397,30 +383,129 @@ static int8_t read_sensor_data(uint32_t period, struct bme280_dev *dev)
 
     return rslt;
 }
+*/
 
-void sensor_reader_task(void *pvParameters)
+// =================================================================
+// BME280 SENSOR LOGIC (Adapted from your example code)
+// =================================================================
+
+static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
 {
-    (void)pvParameters;
-    uint32_t period = 100000;
-    
-    // BME280 setup logic goes here...
+    int8_t rslt = SUCCESS;
+    int8_t idx = 0;
+    uint8_t status_reg;
 
-    ESP_LOGI(TAG, "Starting continuous readings...");
-
-    while (1)
+    while (idx < SAMPLE_COUNT)
     {
-        // Wait for the measurement delay time. Using the wrapper function name.
-        BME280_delay_usec(period, bme280_dev.intf_ptr); 
+        // Read status register to check if measurement is done
+        rslt = bme280_get_regs(BME280_REG_STATUS, &status_reg, 1, dev);
+        print_rslt("bme280_get_regs", rslt);
+        if (rslt != SUCCESS)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1000)); // Wait before retrying on hard error
+            continue;
+        }
 
-        // Read the data and update display/notifications
-        read_sensor_data(period, &bme280_dev);
-        
-        // Wait for the next reading (5 seconds)
+        // Check the 'measuring' bit (bit 3). If 0, measurement is complete.
+        if (!(status_reg & BME280_STATUS_MEAS_DONE))
+        {
+            // If the measurement isn't done, wait for the calculated time
+            dev->delay_us(period, dev->intf_ptr);
+        }
+
+        /* Read compensated data */
+        rslt = bme280_get_sensor_data(BME280_HUM, &comp_data, dev);
+        print_rslt("bme280_get_sensor_data", rslt);
+
+        if (rslt == SUCCESS)
+        {
+// The scaling is needed when BME280_DOUBLE_ENABLE is NOT defined
+// because the compensated value is returned in 1000*RH% in integer mode.
+#ifndef BME280_DOUBLE_ENABLE
+            comp_data.humidity = comp_data.humidity / 1000;
+#endif
+
+            char msg[50];
+
+#ifdef BME280_DOUBLE_ENABLE
+            ESP_LOGI(TAG, "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
+            snprintf(msg, sizeof(msg), "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
+
+#else
+            ESP_LOGI(TAG, "Humidity[%d]:   %lu %%RH", idx, (long unsigned int)comp_data.humidity);
+#endif
+
+            // Use the safe queue wrapper which now uses the global conn_handle internally
+            send_notification_safe(msg);
+
+            // idx++;
+        }
+
+        // Add a small delay for good measure in a FreeRTOS loop
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 
+    return rslt;
+}
+
+// Task wrapper for the main sensor loop
+void humidity_reader_task(void *)
+{
+    int8_t rslt;
+    uint32_t period;
+    struct bme280_settings settings;
+
+    // Get current settings before modifying
+    rslt = bme280_get_sensor_settings(&settings, &bme280_dev);
+    print_rslt("bme280_get_sensor_settings", rslt);
+    if (rslt != SUCCESS)
+    {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* Configuring the over-sampling rate, filter coefficient and standby time */
+    settings.filter = BME280_FILTER_COEFF_2;
+    settings.osr_h = BME280_OVERSAMPLING_1X;
+    settings.osr_p = BME280_OVERSAMPLING_1X;
+    settings.osr_t = BME280_OVERSAMPLING_1X;
+    settings.standby_time = BME280_STANDBY_TIME_0_5_MS;
+
+    rslt = bme280_set_sensor_settings(BME280_SEL_ALL_SETTINGS, &settings, &bme280_dev);
+    print_rslt("bme280_set_sensor_settings", rslt);
+    if (rslt != SUCCESS)
+    {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* Always set the power mode after setting the configuration */
+    rslt = bme280_set_sensor_mode(BME280_POWERMODE_NORMAL, &bme280_dev);
+    print_rslt("bme280_set_power_mode", rslt);
+    if (rslt != SUCCESS)
+    {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* Calculate measurement time in microseconds */
+    rslt = bme280_cal_meas_delay(&period, &settings);
+    print_rslt("bme280_cal_meas_delay", rslt);
+    if (rslt != SUCCESS)
+    {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Measurement time : %lu us", (long unsigned int)period);
+    ESP_LOGI(TAG, "Starting %d humidity samples...", SAMPLE_COUNT);
+
+    get_humidity(period, &bme280_dev);
+
+    ESP_LOGI(TAG, "Humidity sampling complete");
     vTaskDelete(NULL);
 }
+
 
 void humidity_start(void)
 {
@@ -430,10 +515,6 @@ void humidity_start(void)
     i2c_master_init_single_bus();
     vTaskDelay(pdMS_TO_TICKS(100));
     
-    // Run the scan to confirm the addresses
-  //  i2c_scan_master_bus(i2c_bus_single);
-
-
     // 2. Initialize the OLED
     oled_init();
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -457,6 +538,6 @@ void humidity_start(void)
         // (Assuming the bme280_set_sensor_settings and bme280_set_power_mode calls are handled elsewhere 
         // or that the library defaults are good enough for the task to start reading)
         ESP_LOGI(TAG, "BME280 driver successfully initialized. Starting task.");
-        xTaskCreate(sensor_reader_task, "sensor_reader", 4096, NULL, 5, NULL);
+        xTaskCreate(humidity_reader_task, "humidity_reader", 4096, NULL, 5, NULL);
     }
 }
