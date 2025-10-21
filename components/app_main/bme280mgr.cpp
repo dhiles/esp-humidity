@@ -42,16 +42,6 @@ typedef uint32_t u32;
 static struct bme280_dev bme280_dev;
 struct bme280_data comp_data;
 
-// --- OLED Drawing Buffer and Constants ---
-#define LCD_H_RES 128
-#define LCD_V_RES 64
-#define FONT_HEIGHT 8
-static uint8_t lcd_buffer[LCD_H_RES * LCD_V_RES / 8]; // 1024 bytes (128*64 / 8)
-
-// --- Function Prototypes ---
-void oled_update_display(float temp, float hum, float press);
-
-
 // =================================================================
 // MODERN I2C INITIALIZATION (Strict Single Bus on 10/11)
 // =================================================================
@@ -89,16 +79,6 @@ void i2c_master_init_single_bus(void)
     ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_single, &dev_config_bme, &bme_i2c_dev_handle));
     ESP_LOGI(TAG, "Device BME280 (0x%02X) added.", BME280_I2C_ADDR);
 
-
-    // --- 3. OLED Device Configuration (0x3C) ---
-    i2c_device_config_t dev_config_oled = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = SSD1306_ADDR,
-        .scl_speed_hz = OLED_FREQ_HZ,
-    };
-    // Add OLED device to the bus
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_single, &dev_config_oled, &oled_i2c_dev_handle));
-    ESP_LOGI(TAG, "Device OLED (0x%02X) added.", SSD1306_ADDR);
 }
 
 // =================================================================
@@ -157,186 +137,6 @@ void BME280_delay_usec(u32 usec, void *intf_ptr)
     if (ms == 0) ms = 1;
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
-
-
-// =================================================================
-// CUSTOM SSD1306 DRIVER (Modern API)
-// =================================================================
-// (oled_send_cmd, oled_send_data, draw_char, draw_text, oled_init, oled_update_display remain unchanged)
-
-/**
- * @brief Send an SSD1306 command (Fixed to ensure protocol compliance)
- */
-static esp_err_t oled_send_cmd(uint8_t cmd)
-{
-    // Sequence: [START] [ADDR+W] [ACK] [0x00] [ACK] [CMD] [ACK] [STOP]
-    uint8_t cmd_buffer[2] = {0x00, cmd}; // Control byte 0x00 (Command)
-    
-    esp_err_t ret = i2c_master_transmit(oled_i2c_dev_handle, cmd_buffer, 2, -1);
-    
-    return ret;
-}
-
-/**
- * @brief Send display data (GDDRAM)
- */
-static esp_err_t oled_send_data(const uint8_t *data, size_t len)
-{
-    // Sequence: [START] [ADDR+W] [ACK] [0x40] [ACK] [DATA...] [ACK] [STOP]
-    if (len == 0) return ESP_OK;
-
-    // Allocate buffer for Control Byte (1 byte) + Data (len bytes)
-    uint8_t *transfer_buffer = (uint8_t *)malloc(len + 1);
-    if (transfer_buffer == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate memory for OLED transfer buffer.");
-        return ESP_ERR_NO_MEM;
-    }
-
-    transfer_buffer[0] = 0x40; // Control byte 0x40 (Data)
-    memcpy(&transfer_buffer[1], data, len);
-
-    // Transmit the control byte and data in a single transaction
-    esp_err_t ret = i2c_master_transmit(oled_i2c_dev_handle, transfer_buffer, len + 1, -1);
-
-    free(transfer_buffer);
-    return ret;
-}
-
-/**
- * @brief Draws a single 8x8 character using simple font logic
- *
- * FIX: Modified to draw white pixels on a black background for characters.
- */
-static void draw_char(char c, int x_start, int y_start, uint8_t *buffer) {
-    if (x_start < 0 || y_start < 0 || x_start + 8 > LCD_H_RES || y_start + 8 > LCD_V_RES) {
-        return;
-    }
-    
-    // Only attempt to draw actual character glyphs (e.g., if you had font data)
-    // For this simple placeholder, let's just draw a solid 8x8 block for non-space characters
-    // The key is that we SET bits for white, and ensure the background is cleared (all 0s).
-    if (c != ' ') {
-        for (int y = y_start; y < y_start + FONT_HEIGHT; y++) {
-            for (int x = x_start; x < x_start + 8; x++) {
-                if (x < LCD_H_RES && y < LCD_V_RES) {
-                    int page = y / 8;
-                    int byte_idx = page * LCD_H_RES + x;
-                    int bit_idx = y % 8;
-                    
-                    if (byte_idx < sizeof(lcd_buffer)) {
-                        buffer[byte_idx] |= (1u << bit_idx); // Set bit ON (white pixel)
-                    }
-                }
-            }
-        }
-    }
-    // If you had actual font data, this is where you'd iterate through it
-    // For example:
-    // const uint8_t *font_glyph = get_font_glyph(c);
-    // if (font_glyph) {
-    //     for (int col = 0; col < 8; col++) {
-    //         for (int row = 0; row < 8; row++) {
-    //             if ((font_glyph[col] >> row) & 0x01) { // Check if pixel is part of the glyph
-    //                 // Set the corresponding bit in lcd_buffer
-    //             }
-    //         }
-    //     }
-    // }
-}
-
-
-/**
- * @brief Draws text using the placeholder font
- */
-static void draw_text(const char *text, int x, int y, uint8_t *buffer) {
-    int current_x = x;
-    int current_y = y;
-    for (int i = 0; text[i] != '\0'; i++) {
-        draw_char(text[i], current_x, current_y, buffer);
-        current_x += 8;
-        if (current_x + 8 > LCD_H_RES) {
-            current_x = x;
-            current_y += FONT_HEIGHT;
-        }
-        if (current_y + FONT_HEIGHT > LCD_V_RES) {
-            break;
-        }
-    }
-}
-
-
-void oled_init(void)
-{
-    ESP_LOGI(TAG, "Initializing SSD1306 display via custom Modern I2C driver.");
-
-    // Standard SSD1306 Initialization sequence
-    oled_send_cmd(0xAE); // Display Off
-    oled_send_cmd(0xD5); // Set Display Clock Div/Oscillator Freq (0x80)
-    oled_send_cmd(0x80); 
-    oled_send_cmd(0xA8); // Set Multiplex Ratio (0x3F for 64)
-    oled_send_cmd(LCD_V_RES - 1); 
-    oled_send_cmd(0xD3); // Set Display Offset (0x00)
-    oled_send_cmd(0x00);
-    oled_send_cmd(0x40); // Set Start Line (0x00)
-    oled_send_cmd(0x8D); // Charge Pump Setting (0x14 - enable)
-    oled_send_cmd(0x14); 
-    oled_send_cmd(0x20); // Set Memory Addressing Mode (0x02 - Page Addressing)
-    oled_send_cmd(0x02); 
-    oled_send_cmd(0xA1); // Segment Re-map
-    oled_send_cmd(0xC8); // COM Output Scan Direction
-    oled_send_cmd(0xDA); // Set COM Pins Hardware Configuration (0x12)
-    oled_send_cmd(0x12); 
-    oled_send_cmd(0x81); // Set Contrast (0xCF)
-    oled_send_cmd(0xCF); 
-    oled_send_cmd(0xD9); // Set Pre-charge Period (0xF1)
-    oled_send_cmd(0xF1); 
-    oled_send_cmd(0xDB); // Set VCOM Detect (0x40)
-    oled_send_cmd(0x40); 
-    oled_send_cmd(0xA4); // Entire Display ON/Resume to RAM content display
-    oled_send_cmd(0xA6); // Normal Display (!!! This is the key for white on black)
-    // IMPORTANT: 0xA7 is Inverse Display (black on white)
-    oled_send_cmd(0xAF); // Display ON
-
-    // Clear the internal buffer and push it to the display
-    memset(lcd_buffer, 0x00, sizeof(lcd_buffer));
-    oled_update_display(0.0f, 0.0f, 0.0f); 
-
-    ESP_LOGI(TAG, "OLED initialized successfully with custom driver.");
-}
-
-void oled_update_display(float temp, float hum, float press)
-{
-    // Clear the buffer to all black (all bits 0) before drawing
-    memset(lcd_buffer, 0x00, sizeof(lcd_buffer));
-    
-    char temp_str[32];
-    char hum_str[32];
-    char press_str[32];
-    
-    // Convert Pa to hPa for readability
-    snprintf(temp_str, sizeof(temp_str), "T: %.1f C", temp);
-    snprintf(hum_str, sizeof(hum_str), "H: %.1f %%", hum);
-    snprintf(press_str, sizeof(press_str), "P: %.1f hPa", press / 100.0f);
-
-    // Draw the text
-    draw_text("BME280 Data:", 0, 0, lcd_buffer);
-    draw_text(temp_str, 0, 1 * FONT_HEIGHT, lcd_buffer);
-    draw_text(hum_str, 0, 2 * FONT_HEIGHT, lcd_buffer);
-    draw_text(press_str, 0, 3 * FONT_HEIGHT, lcd_buffer);
-
-    // --- Transfer the buffer to the display (Page Addressing Mode) ---
-
-    for (uint8_t page = 0; page < LCD_V_RES / 8; ++page) {
-        // Set page start address (0xB0 | page), then column start (0x00 and 0x10 for 0,0)
-        oled_send_cmd(0xB0 | page); // Set start page address (page 0-7)
-        oled_send_cmd(0x00);        // Set low column address (0)
-        oled_send_cmd(0x10);        // Set high column address (0)
-        
-        // Transfer 128 bytes (one page) of data
-        oled_send_data(lcd_buffer + (page * LCD_H_RES), LCD_H_RES);
-    }
-}
-
 
 // =================================================================
 // BME280 SENSOR LOGIC
@@ -515,10 +315,6 @@ void humidity_start(void)
     i2c_master_init_single_bus();
     vTaskDelay(pdMS_TO_TICKS(100));
     
-    // 2. Initialize the OLED
-    oled_init();
-    vTaskDelay(pdMS_TO_TICKS(100));
-
     // 3. Configure BME280 driver
     bme280_dev.intf = BME280_I2C_INTF;
     bme280_dev.read = BME280_I2C_bus_read;
