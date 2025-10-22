@@ -108,6 +108,7 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "Connection established; status=%d", event->connect.status);
         if (event->connect.status == 0) {
             current_conn_handle = event->connect.conn_handle;  // Update global
+            led_set_state(GREEN_LED, true);
             // NOTE: No specific task is started here; the consumer task processes the queue
         }
         break;
@@ -115,7 +116,7 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "Connection lost; reason=%d", event->disconnect.reason);
         current_conn_handle = BLE_HS_CONN_HANDLE_NONE;  // Clear global
-
+        led_set_state(GREEN_LED, false);
         // Restart advertising if provisioning is not yet complete
         if (provisioning_sem != NULL && uxSemaphoreGetCount(provisioning_sem) == 0) {
             ESP_LOGI(TAG, "Restarting advertising after disconnect...");
@@ -568,6 +569,24 @@ void ble_provisioning_init(bool blocking)
         provisioning_sem = NULL;
     }
     // Else: Non-blocking, task runs forever
+}
+
+// Add to end of file (extern "C"):
+void ble_provisioning_deinit(void) {
+    if (ble_host_handle != NULL) {
+        vTaskDelete(ble_host_handle);
+        ble_host_handle = NULL;
+    }
+    if (notification_queue != NULL) {
+        vQueueDelete(notification_queue);
+        notification_queue = NULL;
+    }
+    if (provisioning_sem != NULL) {
+        vSemaphoreDelete(provisioning_sem);
+        provisioning_sem = NULL;
+    }
+    nimble_port_deinit();  // If needed
+    ESP_LOGI(TAG, "BLE Provisioning deinitialized.");
 }
 
 #ifdef __cplusplus

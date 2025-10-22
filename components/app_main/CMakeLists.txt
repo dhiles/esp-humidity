@@ -4,6 +4,7 @@ idf_component_register(
         "bme280mgr.cpp"
         "webserver.cpp"
         "ble_provisioning.cpp"
+        "myled.cpp"
     
     INCLUDE_DIRS 
         "."

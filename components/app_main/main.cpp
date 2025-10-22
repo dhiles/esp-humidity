@@ -28,8 +28,10 @@
 #include "webserver.h"
 
 #include "bme280mgr.h"
+#include "myled.h"
 
 static const char *TAG = "MAIN";
+#define BLINK_DELAY_MS 1000
 
 static void check_psram(void)
 {
@@ -75,55 +77,44 @@ extern "C" void app_main(void)
         return;
     }
     check_psram();
+
+    gpio_set_direction(RED_LED, GPIO_MODE_OUTPUT);
+    gpio_set_direction(GREEN_LED, GPIO_MODE_OUTPUT);
+
     MyWiFi::global_init();
 
-    // Start BLE provisioning service persistently (non-blocking)
-  //  ble_provisioning_init(false); // Modified to take bool blocking param; starts task without waiting
-
-    // Initial Wi-Fi connection attempt
-    //   esp_err_t wifi_ret = MyWiFi::connectWithBackoff("");
-    esp_err_t wifi_ret = ESP_ERR_NO_WIFI_CREDENTIALS;
-    if (wifi_ret == ESP_ERR_NO_WIFI_CREDENTIALS)
+    // Automatic WiFi start: Tries STA if creds exist, else starts AP for provisioning
+    esp_err_t wifi_ret = MyWiFi::startWiFiAuto();
+    if (wifi_ret != ESP_OK)
     {
-        ESP_LOGI(TAG, "No Wi-Fi credentials found. Waiting for BLE provisioning...");
-        wifi_ret = MyWiFi::startAPWithBackoff();
-/*
-        // Block and wait for provisioning to complete (up to timeout)
-        BaseType_t sem_result = xSemaphoreTake(provisioning_sem, pdMS_TO_TICKS(PROVISIONING_TIMEOUT_MS));
-        if (sem_result == pdTRUE)
-        {
-            ESP_LOGI(TAG, "Provisioning completed. Retrying Wi-Fi connection...");
-            wifi_ret = MyWiFi::connectWithBackoff(""); // Reload fresh credentials
-        }
-        else
-        {
-            ESP_LOGE(TAG, "Provisioning timed out. Continuing without Wi-Fi (BLE still active for future connections).");
-            wifi_ret = ESP_FAIL; // Keep as failure to skip further steps if desired
-        } */
+        ESP_LOGE(TAG, "Failed to start WiFi (STA or AP). Halting.");
+        return;
     }
 
-    // If Wi-Fi connected successfully (or skip if failed), proceed
-    if (wifi_ret == ESP_OK)
+    ble_provisioning_init(false);
+
+    // If Wi-Fi started successfully (STA or AP mode), proceed with services
+    // In AP mode, webserver provides /provision endpoint for credential input + reboot to STA
+    humidity_start();
+    httpd_handle_t web_server = start_webserver(); // Start webserver (handles /readings, /provision, etc.)
+
+    // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
+    if (MyWiFi::s_sta_netif != nullptr && MyWiFi::isConnected())
     {
-      //  MyNTP::initialize();
-      //  MyNTP::syncTime();
-
-        humidity_start();
-        start_webserver();
-    }
-    else
-    {
-        ESP_LOGW(TAG, "Skipping NTP/webserver due to Wi-Fi failure. BLE remains available for provisioning/notifications.");
+        MyNTP::initialize();
+        MyNTP::syncTime();
     }
 
-    //  xTaskCreate(notify_demo_task, "notify_demo", 8192, NULL, 3, &notify_demo_task_handle);
-
-    // Main task now idles; BLE host task runs persistently in background
-    // You can add periodic tasks here if needed, e.g., to send notifications via BLE
+    // Main task now idles; webserver and sensor tasks run in background
+    // Optional: Add timeout in AP mode to auto-reboot if no provisioning (e.g., after 10min)
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(10000)); // Idle loop
-        // Example: If you have a connected BLE device, send a status message
+        led_set_state(RED_LED, true);
+        vTaskDelay(BLINK_DELAY_MS / portTICK_PERIOD_MS);
+
+        led_set_state(RED_LED, false);
+        vTaskDelay(BLINK_DELAY_MS / portTICK_PERIOD_MS); // Example: If you have a connected BLE device, send a status message
         // send_message_notification(some_conn_handle, "WiFi Status: Connected");
     }
 }
+
