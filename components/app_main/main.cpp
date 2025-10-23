@@ -69,6 +69,9 @@ void notify_demo_task(void *param)
 // =================================================================
 extern "C" void app_main(void)
 {
+    esp_log_level_set("MYLED", ESP_LOG_NONE);
+    esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
+
     // Initialize all NVS JSON objects
     esp_err_t err = init_nvs_json_all();
     if (err != ESP_OK)
@@ -86,7 +89,15 @@ extern "C" void app_main(void)
 
     // Automatic WiFi start: Tries STA if creds exist, else starts AP for provisioning
     esp_err_t wifi_ret = MyWiFi::startWiFiAuto();
-    if (wifi_ret != ESP_OK)
+    if (wifi_ret == WIFI_MODE_STA_SUCCESS)
+    {
+        led_start_flashing(GREEN_LED, 500);
+    }
+    else if (wifi_ret == WIFI_MODE_AP_SUCCESS)
+    {
+        led_start_flashing(GREEN_LED, 5000);
+    }
+    else if (wifi_ret != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to start WiFi (STA or AP). Halting.");
         return;
@@ -106,16 +117,30 @@ extern "C" void app_main(void)
         MyNTP::syncTime();
     }
 
+    // NEW: Handle provisioning completion in AP mode (wait for BLE/web signal)
+    if (wifi_ret == WIFI_MODE_AP_SUCCESS) {
+        ESP_LOGI(TAG, "In AP mode: Waiting for provisioning signal...");
+        if (provisioning_sem != NULL && xSemaphoreTake(provisioning_sem, portMAX_DELAY) == pdTRUE) {
+            ESP_LOGI(TAG, "Provisioning signaled: Credentials applied, rebooting to STA mode.");
+            // Optional: Stop webserver/BLE tasks here if needed for clean shutdown
+            // stop_webserver(web_server);
+            // ble_provisioning_deinit(); // If you have a deinit function
+            vTaskDelay(pdMS_TO_TICKS(1000)); // Brief delay for logs to flush
+            esp_restart();
+        } else {
+            ESP_LOGW(TAG, "Provisioning semaphore wait failed or timed out.");
+        }
+    }
+
     // Main task now idles; webserver and sensor tasks run in background
     // Optional: Add timeout in AP mode to auto-reboot if no provisioning (e.g., after 10min)
     while (1)
     {
-      //  led_set_state(RED_LED, true);
-      //  vTaskDelay(BLINK_DELAY_MS / portTICK_PERIOD_MS);
+        //  led_set_state(RED_LED, true);
+        //  vTaskDelay(BLINK_DELAY_MS / portTICK_PERIOD_MS);
 
-      //  led_set_state(RED_LED, false);
+        //  led_set_state(RED_LED, false);
         vTaskDelay(1000 / portTICK_PERIOD_MS); // Example: If you have a connected BLE device, send a status message
         // send_message_notification(some_conn_handle, "WiFi Status: Connected");
     }
 }
-
