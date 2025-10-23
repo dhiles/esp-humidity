@@ -11,6 +11,7 @@ idf_component_register(
         "../../main"
     
     REQUIRES
+        common
         esp32-shared 
         esp_http_server
         esp_timer

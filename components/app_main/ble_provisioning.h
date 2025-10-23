@@ -10,7 +10,7 @@
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 #include "esp_netif.h" // Added for C++ compatibility
-
+#include "constants.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
