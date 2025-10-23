@@ -108,7 +108,8 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "Connection established; status=%d", event->connect.status);
         if (event->connect.status == 0) {
             current_conn_handle = event->connect.conn_handle;  // Update global
-            led_set_state(GREEN_LED, true);
+          //  led_set_state(GREEN_LED, true);
+            led_stop_flashing(GREEN_LED, 1);
             // NOTE: No specific task is started here; the consumer task processes the queue
         }
         break;
@@ -326,6 +327,7 @@ static void ble_prov_advertise(void)
         ESP_LOGE(TAG, "Error starting advertisement; rc=%d", rc);
         return;
     }
+    led_start_flashing(GREEN_LED); 
     ESP_LOGI(TAG, "BLE Provisioning Advertising Started as '%s' with addr type %d", DEVICE_NAME, own_addr_type);
 }
 

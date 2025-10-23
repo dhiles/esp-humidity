@@ -80,6 +80,7 @@ extern "C" void app_main(void)
 
     gpio_set_direction(RED_LED, GPIO_MODE_OUTPUT);
     gpio_set_direction(GREEN_LED, GPIO_MODE_OUTPUT);
+    led_set_state(RED_LED, true);
 
     MyWiFi::global_init();
 
@@ -109,11 +110,11 @@ extern "C" void app_main(void)
     // Optional: Add timeout in AP mode to auto-reboot if no provisioning (e.g., after 10min)
     while (1)
     {
-        led_set_state(RED_LED, true);
-        vTaskDelay(BLINK_DELAY_MS / portTICK_PERIOD_MS);
+      //  led_set_state(RED_LED, true);
+      //  vTaskDelay(BLINK_DELAY_MS / portTICK_PERIOD_MS);
 
-        led_set_state(RED_LED, false);
-        vTaskDelay(BLINK_DELAY_MS / portTICK_PERIOD_MS); // Example: If you have a connected BLE device, send a status message
+      //  led_set_state(RED_LED, false);
+        vTaskDelay(1000 / portTICK_PERIOD_MS); // Example: If you have a connected BLE device, send a status message
         // send_message_notification(some_conn_handle, "WiFi Status: Connected");
     }
 }
