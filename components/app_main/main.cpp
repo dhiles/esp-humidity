@@ -91,11 +91,11 @@ extern "C" void app_main(void)
     esp_err_t wifi_ret = MyWiFi::startWiFiAuto();
     if (wifi_ret == WIFI_MODE_STA_SUCCESS)
     {
-        led_start_flashing(GREEN_LED, 500);
+        led_set_state(GREEN_LED, true);
     }
     else if (wifi_ret == WIFI_MODE_AP_SUCCESS)
     {
-        led_start_flashing(GREEN_LED, 5000);
+        led_start_flashing(GREEN_LED, 500);
     }
     else if (wifi_ret != ESP_OK)
     {
@@ -108,7 +108,7 @@ extern "C" void app_main(void)
     // If Wi-Fi started successfully (STA or AP mode), proceed with services
     // In AP mode, webserver provides /provision endpoint for credential input + reboot to STA
     humidity_start();
-    httpd_handle_t web_server = start_webserver(); // Start webserver (handles /readings, /provision, etc.)
+    start_webserver(); // Start webserver (handles /readings, /provision, etc.)
 
     // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
     if (MyWiFi::s_sta_netif != nullptr && MyWiFi::isConnected())
