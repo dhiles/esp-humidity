@@ -229,7 +229,8 @@ static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
 
 #ifdef BME280_DOUBLE_ENABLE
             ESP_LOGI(TAG, "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
-            snprintf(msg, sizeof(msg), "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
+            // snprintf(msg, sizeof(msg), "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
+            snprintf(msg, sizeof(msg), "{\"humidity\": %.2lf}", idx, comp_data.humidity);
 
 #else
             ESP_LOGI(TAG, "Humidity[%d]:   %lu %%RH", idx, (long unsigned int)comp_data.humidity);
