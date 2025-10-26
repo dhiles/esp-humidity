@@ -92,6 +92,7 @@ extern "C" void app_main(void)
     if (wifi_ret == WIFI_MODE_STA_SUCCESS)
     {
         led_set_state(GREEN_LED, true);
+        MyWiFi::start_mdns();
     }
     else if (wifi_ret == WIFI_MODE_AP_SUCCESS)
     {

@@ -98,7 +98,7 @@ esp_err_t root_get_handler(httpd_req_t *req)
 </head>
 <body>
     <div class="container">
-        <h1>Welcome to the ESP32 Web Server!</h1>
+        <h1>Welcome to the Humidoer Web Server!</h1>
         <p>This is a simple welcome page.</p>
         <a href="/hello">Check Humidity</a>
     </div>

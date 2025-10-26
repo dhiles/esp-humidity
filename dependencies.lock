@@ -15,6 +15,16 @@ dependencies:
       path: /home/douglas/dev/esp-inf/esp-humidity/components/espressif__i2c_bus
       type: local
     version: 1.4.2
+  espressif/mdns:
+    component_hash: 3ec0af5f6bce310512e90f482388d21cc7c0e99668172d2f895356165fc6f7c5
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.8.2
   idf:
     source:
       type: idf
@@ -22,7 +32,8 @@ dependencies:
 direct_dependencies:
 - espressif/cmake_utilities
 - espressif/i2c_bus
+- espressif/mdns
 - idf
-manifest_hash: 9642f85c9818954cfab0df7176dea611837594945066f2604542839973669ab1
+manifest_hash: 6b012046a5cfcef14dc9a4dcfc3b83f114ac54604a9a37119158835037e541f5
 target: esp32s3
 version: 2.0.0

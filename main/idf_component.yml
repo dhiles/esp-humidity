@@ -15,4 +15,5 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   espressif/i2c_bus: ^1.4.2
-  
+
+  espressif/mdns: '*'
