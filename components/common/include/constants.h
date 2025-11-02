@@ -1,9 +1,9 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#define RED_LED GPIO_NUM_13
-#define GREEN_LED GPIO_NUM_36
-#define BLUE_LED GPIO_NUM_40
+#define RED_LED GPIO_NUM_16
+#define GREEN_LED GPIO_NUM_16
+#define BLUE_LED GPIO_NUM_17
 
 // Hardcoded constants (compile-time)
 #define BUFFER_SIZE 1024
@@ -19,8 +19,8 @@ extern const char* APP_VERSION;  // Defined in a .cpp if value is set at runtime
 namespace WiFiConfig {
     constexpr char SSID[] = "tplink2dot4"; //"dishy2";
     constexpr char PASSWORD[] =  "hhhh4100"; // "elon$1971";
-    constexpr char MDNS_HOSTNAME[] = "humidoer";
-    constexpr char MDNS_INSTANCENAME[] = "humidoer";
+    constexpr char MDNS_HOSTNAME[] = "dfrobot";
+    constexpr char MDNS_INSTANCENAME[] = "dfrobot";
 }
 
 namespace MQTTConfig {

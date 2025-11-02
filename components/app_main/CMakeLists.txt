@@ -1,9 +1,6 @@
 idf_component_register(
     SRCS 
-        "main.cpp"
-        "bme280mgr.cpp"
-        "webserver.cpp"
-        "ble_provisioning.cpp"
+        "main.cpp"       
     
     INCLUDE_DIRS 
         "."
@@ -17,7 +14,6 @@ idf_component_register(
         esp_lcd
         fatfs
         driver 
-        bme280         
         bt
 
     PRIV_REQUIRES

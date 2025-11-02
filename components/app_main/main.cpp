@@ -13,56 +13,23 @@
 #include "esp_system.h"
 #include "esp_now.h"
 #include "esp_mac.h"
-#include "esp_psram.h"
 #include <esp_sleep.h>
 #include "sdkconfig.h"
 // #include "oled.h"
 
 #include "espnow_basic_config.h"
 #include "nvs_json.h"
+#include "mysystem.h"
 #include "mywifi.h"
-#include "ble_provisioning.h"
 #include "mymqtt.h"
 #include "myntp.h"
 #include "constants.h"
 #include "webserver.h"
 
-#include "bme280mgr.h"
 #include "myled.h"
 
 static const char *TAG = "MAIN";
 #define BLINK_DELAY_MS 1000
-
-static void check_psram(void)
-{
-    if (esp_psram_is_initialized())
-    {
-        size_t psram_size = esp_psram_get_size();
-        size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        ESP_LOGI(TAG, "PSRAM initialized: Total size = %u bytes, Free = %u bytes", psram_size, psram_free);
-    }
-    else
-    {
-        ESP_LOGE(TAG, "PSRAM not initialized!");
-    }
-}
-
-void notify_demo_task(void *param)
-{
-    int counter = 0;
-    while (1)
-    { // Run until disconnect (handled in gap_cb)
-
-        char msg[50];
-        snprintf(msg, sizeof(msg), "notify_demo_task #%d: Hello from ESP32!", ++counter);
-
-        // Use the safe queue wrapper which now uses the global conn_handle internally
-        send_notification_safe(msg);
-        //  ESP_LOGI(TAG, msg);
-        vTaskDelay(pdMS_TO_TICKS(5000)); // Every 5s
-    }
-    vTaskDelete(NULL);
-}
 
 // =================================================================
 // APP ENTRY POINT
@@ -70,7 +37,6 @@ void notify_demo_task(void *param)
 extern "C" void app_main(void)
 {
     esp_log_level_set("MYLED", ESP_LOG_NONE);
-    esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
 
     // Initialize all NVS JSON objects
     esp_err_t err = init_nvs_json_all();
@@ -79,7 +45,7 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "Failed to initialize NVS JSON: %s", esp_err_to_name(err));
         return;
     }
-    check_psram();
+    MySystem::check_psram();
 
     gpio_set_direction(RED_LED, GPIO_MODE_OUTPUT);
     gpio_set_direction(GREEN_LED, GPIO_MODE_OUTPUT);
@@ -92,7 +58,6 @@ extern "C" void app_main(void)
     if (wifi_ret == WIFI_MODE_STA_SUCCESS)
     {
         led_set_state(GREEN_LED, true);
-        MyWiFi::start_mdns();
     }
     else if (wifi_ret == WIFI_MODE_AP_SUCCESS)
     {
@@ -104,11 +69,9 @@ extern "C" void app_main(void)
         return;
     }
 
-    ble_provisioning_init(false);
-
     // If Wi-Fi started successfully (STA or AP mode), proceed with services
     // In AP mode, webserver provides /provision endpoint for credential input + reboot to STA
-    humidity_start();
+  //  humidity_start();
     start_webserver(); // Start webserver (handles /readings, /provision, etc.)
 
     // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
@@ -118,7 +81,7 @@ extern "C" void app_main(void)
         MyNTP::syncTime();
     }
 
-    // NEW: Handle provisioning completion in AP mode (wait for BLE/web signal)
+    // NEW: Handle provisioning completion in AP mode (wait for provisioning signal)
     if (wifi_ret == WIFI_MODE_AP_SUCCESS) {
         ESP_LOGI(TAG, "In AP mode: Waiting for provisioning signal...");
         if (provisioning_sem != NULL && xSemaphoreTake(provisioning_sem, portMAX_DELAY) == pdTRUE) {
