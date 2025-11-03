@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS 
         "main.cpp"
+        "custom_webserver.cpp"
     
     INCLUDE_DIRS 
         "."

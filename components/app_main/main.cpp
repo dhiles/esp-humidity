@@ -8,7 +8,6 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
-// #include "esp_camera.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_now.h"
@@ -16,8 +15,6 @@
 #include "esp_psram.h"
 #include <esp_sleep.h>
 #include "sdkconfig.h"
-// #include "oled.h"
-
 #include "espnow_basic_config.h"
 #include "nvs_json.h"
 #include "mywifi.h"
@@ -26,10 +23,10 @@
 #include "myntp.h"
 #include "constants.h"
 #include "webserver.h"
-
 #include "work.h"
 #include "myled.h"
 #include "mysystem.h"
+#include "custom_webserver.h"
 
 static const char *TAG = "MAIN";
 #define BLINK_DELAY_MS 1000
@@ -57,7 +54,7 @@ void notify_demo_task(void *param)
 extern "C" void app_main(void)
 {
     esp_log_level_set("MYLED", ESP_LOG_NONE);
-   // esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
+    // esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
 
     // Initialize all NVS JSON objects
     esp_err_t err = init_nvs_json_all();
@@ -97,9 +94,9 @@ extern "C" void app_main(void)
     // If Wi-Fi started successfully (STA or AP mode), proceed with services
     // In AP mode, webserver provides /provision endpoint for credential input + reboot to STA
     // humidity_start();
-    //WorkImplementation::getInstance().init_work();
+    // WorkImplementation::getInstance().init_work();
     start_work_task();
-    start_webserver(); // Start webserver (handles /readings, /provision, etc.)
+    start_custom_webserver(); 
     // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
     if (MyWiFi::s_sta_netif != nullptr && MyWiFi::isConnected())
     {
