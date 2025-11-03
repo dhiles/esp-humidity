@@ -57,7 +57,7 @@ void notify_demo_task(void *param)
 extern "C" void app_main(void)
 {
     esp_log_level_set("MYLED", ESP_LOG_NONE);
-    esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
+   // esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
 
     // Initialize all NVS JSON objects
     esp_err_t err = init_nvs_json_all();
@@ -97,9 +97,9 @@ extern "C" void app_main(void)
     // If Wi-Fi started successfully (STA or AP mode), proceed with services
     // In AP mode, webserver provides /provision endpoint for credential input + reboot to STA
     // humidity_start();
- //   start_work_task();
+    //WorkImplementation::getInstance().init_work();
+    start_work_task();
     start_webserver(); // Start webserver (handles /readings, /provision, etc.)
-    MyWiFi::start_mdns();
     // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
     if (MyWiFi::s_sta_netif != nullptr && MyWiFi::isConnected())
     {

@@ -154,7 +154,7 @@ static void print_rslt(const char *func, int8_t rslt)
 }
 
 // Function to get a single humidity reading
-int8_t getHumidityReading(float *humidity_value)
+int8_t getHumidityReading1(float *humidity_value)
 {
     int8_t rslt = SUCCESS;
     uint8_t status_reg;
@@ -218,28 +218,29 @@ int8_t getHumidityReading(float *humidity_value)
     return rslt;
 }
 
-int8_t get_humidity(uint32_t period)
+// int8_t get_humidity(uint32_t period)
+int8_t getHumidityReading(float *humidity_value)
 {
     int8_t rslt = SUCCESS;
     int8_t idx = 0;
     uint8_t status_reg;
 
-    while (idx < SAMPLE_COUNT)
-    {
+   // while (true) // (idx < SAMPLE_COUNT)
+   // {
         // Read status register to check if measurement is done
         rslt = bme280_get_regs(BME280_REG_STATUS, &status_reg, 1, &bme280_dev);
         print_rslt("bme280_get_regs", rslt);
         if (rslt != SUCCESS)
         {
             vTaskDelay(pdMS_TO_TICKS(1000)); // Wait before retrying on hard error
-            continue;
+            return rslt;
         }
 
         // Check the 'measuring' bit (bit 3). If 0, measurement is complete.
         if (!(status_reg & BME280_STATUS_MEAS_DONE))
         {
             // If the measurement isn't done, wait for the calculated time
-            bme280_dev.delay_us(period, bme280_dev.intf_ptr);
+            bme280_dev.delay_us(50, bme280_dev.intf_ptr);
         }
 
         /* Read compensated data */
@@ -264,21 +265,22 @@ int8_t get_humidity(uint32_t period)
             snprintf(msg, sizeof(msg), "{\"humidity\": %.2f}", (float)comp_data.humidity);
 #endif
 
+            *humidity_value = (float)comp_data.humidity;
             // Use the safe queue wrapper which now uses the global conn_handle internally
-            send_notification_safe(msg);
+          //  send_notification_safe(msg);
 
             idx++;
         }
 
         // Add a small delay for good measure in a FreeRTOS loop
-        vTaskDelay(pdMS_TO_TICKS(5000));
-    }
+       // vTaskDelay(pdMS_TO_TICKS(5000));
+  //  }
 
     return rslt;
 }
 
 // Task wrapper for the main sensor loop
-void humidity_reader_task(void *)
+void set_sensor_reader()
 {
     int8_t rslt;
     uint32_t period;
@@ -289,7 +291,7 @@ void humidity_reader_task(void *)
     print_rslt("bme280_get_sensor_settings", rslt);
     if (rslt != SUCCESS)
     {
-        vTaskDelete(NULL);
+      //  vTaskDelete(NULL);
         return;
     }
 
@@ -304,7 +306,7 @@ void humidity_reader_task(void *)
     print_rslt("bme280_set_sensor_settings", rslt);
     if (rslt != SUCCESS)
     {
-        vTaskDelete(NULL);
+       // vTaskDelete(NULL);
         return;
     }
 
@@ -313,7 +315,7 @@ void humidity_reader_task(void *)
     print_rslt("bme280_set_sensor_mode", rslt);
     if (rslt != SUCCESS)
     {
-        vTaskDelete(NULL);
+      //  vTaskDelete(NULL);
         return;
     }
 
@@ -322,17 +324,17 @@ void humidity_reader_task(void *)
     print_rslt("bme280_cal_meas_delay", rslt);
     if (rslt != SUCCESS)
     {
-        vTaskDelete(NULL);
+      // vTaskDelete(NULL);
         return;
     }
 
     ESP_LOGI(TAG, "Measurement time : %lu us", (long unsigned int)period);
     ESP_LOGI(TAG, "Starting %d humidity samples...", SAMPLE_COUNT);
 
-    get_humidity(period);
+   // get_humidity(period);
 
-    ESP_LOGI(TAG, "Humidity sampling complete");
-    vTaskDelete(NULL);
+  //  ESP_LOGI(TAG, "Humidity sampling complete");
+  //  vTaskDelete(NULL);
 }
 
 void humidity_init(void)
@@ -362,6 +364,7 @@ void humidity_init(void)
         // (Assuming the bme280_set_sensor_settings and bme280_set_power_mode calls are handled elsewhere 
         // or that the library defaults are good enough for the task to start reading)
         ESP_LOGI(TAG, "BME280 driver successfully initialized");
+        set_sensor_reader();
       //  xTaskCreate(humidity_reader_task, "humidity_reader", 4096, NULL, 5, NULL);
     }
 }

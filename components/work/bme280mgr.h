@@ -19,7 +19,7 @@ extern struct bme280_data comp_data;
 
 void humidity_init(void);
 int8_t getHumidityReading(float *humidity_value);
-void humidity_reader_task(void*);
+//void humidity_reader_task(void*);
 void i2c_scanner(void);
 void i2c_master_init(void);
 
