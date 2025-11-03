@@ -1,9 +1,6 @@
 idf_component_register(
     SRCS 
         "main.cpp"
-        "bme280mgr.cpp"
-        "webserver.cpp"
-        "ble_provisioning.cpp"
     
     INCLUDE_DIRS 
         "."
@@ -11,6 +8,7 @@ idf_component_register(
     
     REQUIRES
         common
+        work
         esp32-shared 
         esp_http_server
         esp_timer

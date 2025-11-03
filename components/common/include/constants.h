@@ -1,9 +1,9 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#define RED_LED GPIO_NUM_13
-#define GREEN_LED GPIO_NUM_36
-#define BLUE_LED GPIO_NUM_40
+#define GREEN_LED GPIO_NUM_13
+#define BLUE_LED GPIO_NUM_36
+#define RED_LED GPIO_NUM_40
 
 // Hardcoded constants (compile-time)
 #define BUFFER_SIZE 1024

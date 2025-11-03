@@ -24,7 +24,6 @@ static const char *TAG = "BME280_OLED";
 #define SSD1306_ADDR 0x3C
 #define OLED_FREQ_HZ 400000 
 
-#define SUCCESS 0
 #define BME280_INIT_VALUE -1
 #define SAMPLE_COUNT UINT8_C(50)
 
@@ -154,42 +153,72 @@ static void print_rslt(const char *func, int8_t rslt)
     }
 }
 
-/*
-static int8_t read_sensor_data(uint32_t period, struct bme280_dev *dev)
+// Function to get a single humidity reading
+int8_t getHumidityReading(float *humidity_value)
 {
-    int8_t rslt = BME280_INIT_VALUE;
-    
-    // Use the Bosch driver to read the data
-    rslt = bme280_get_sensor_data(BME280_ALL, &comp_data, dev);
+    int8_t rslt = SUCCESS;
+    uint8_t status_reg;
+    struct bme280_data comp_data;
+    uint32_t period;
+    struct bme280_settings settings;
 
+    // Get current settings to calculate measurement period
+    rslt = bme280_get_sensor_settings(&settings, &bme280_dev);
+    if (rslt != SUCCESS)
+    {
+        ESP_LOGE(TAG, "Failed to get sensor settings for single reading");
+        return rslt;
+    }
+
+    // Calculate measurement time in microseconds
+    rslt = bme280_cal_meas_delay(&period, &settings);
+    if (rslt != SUCCESS)
+    {
+        ESP_LOGE(TAG, "Failed to calculate measurement delay for single reading");
+        return rslt;
+    }
+
+    // Wait for measurement to complete
+    do {
+        // Read status register to check if measurement is done
+        rslt = bme280_get_regs(BME280_REG_STATUS, &status_reg, 1, &bme280_dev);
+        if (rslt != SUCCESS)
+        {
+            ESP_LOGE(TAG, "Failed to read status register for single reading");
+            return rslt;
+        }
+
+        // If measurement isn't done, wait for the calculated time
+        if (status_reg & BME280_STATUS_MEAS_DONE)
+        {
+            break;
+        }
+        bme280_dev.delay_us(period, bme280_dev.intf_ptr);
+        
+    } while (1);
+
+    // Read compensated humidity data
+    rslt = bme280_get_sensor_data(BME280_HUM, &comp_data, &bme280_dev);
     if (rslt == SUCCESS)
     {
-        // Convert and format the data
-        float temperature = (float)comp_data.temperature / 100.0f;
-        float humidity = (float)comp_data.humidity / 1000.0f;
-        float pressure = (float)comp_data.pressure / 256.0f; // Pa
-
-        char msg[100];
-        // Log the final user-friendly data
-        snprintf(msg, sizeof(msg), "T:%.1fC H:%.1f%% P:%.1fhPa", temperature, humidity, pressure / 100.0f);
-        ESP_LOGI(TAG, "%s", msg);
-        send_notification_safe(msg);
-
-        // Update the OLED display with the sensor data
-        oled_update_display(temperature, humidity, pressure);
-    } else {
-        ESP_LOGE(TAG, "Failed to read BME280 data.");
+        // The scaling is needed when BME280_DOUBLE_ENABLE is NOT defined
+        // because the compensated value is returned in 1000*RH% in integer mode.
+#ifndef BME280_DOUBLE_ENABLE
+        *humidity_value = comp_data.humidity / 1000.0f;
+#else
+        *humidity_value = (float)comp_data.humidity;
+#endif
+        ESP_LOGI(TAG, "Single humidity reading: %.2f %%RH", *humidity_value);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Failed to get sensor data for single reading");
     }
 
     return rslt;
 }
-*/
 
-// =================================================================
-// BME280 SENSOR LOGIC (Adapted from your example code)
-// =================================================================
-
-static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
+int8_t get_humidity(uint32_t period)
 {
     int8_t rslt = SUCCESS;
     int8_t idx = 0;
@@ -198,7 +227,7 @@ static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
     while (idx < SAMPLE_COUNT)
     {
         // Read status register to check if measurement is done
-        rslt = bme280_get_regs(BME280_REG_STATUS, &status_reg, 1, dev);
+        rslt = bme280_get_regs(BME280_REG_STATUS, &status_reg, 1, &bme280_dev);
         print_rslt("bme280_get_regs", rslt);
         if (rslt != SUCCESS)
         {
@@ -210,11 +239,11 @@ static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
         if (!(status_reg & BME280_STATUS_MEAS_DONE))
         {
             // If the measurement isn't done, wait for the calculated time
-            dev->delay_us(period, dev->intf_ptr);
+            bme280_dev.delay_us(period, bme280_dev.intf_ptr);
         }
 
         /* Read compensated data */
-        rslt = bme280_get_sensor_data(BME280_HUM, &comp_data, dev);
+        rslt = bme280_get_sensor_data(BME280_HUM, &comp_data, &bme280_dev);
         print_rslt("bme280_get_sensor_data", rslt);
 
         if (rslt == SUCCESS)
@@ -229,17 +258,16 @@ static int8_t get_humidity(uint32_t period, struct bme280_dev *dev)
 
 #ifdef BME280_DOUBLE_ENABLE
             ESP_LOGI(TAG, "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
-            // snprintf(msg, sizeof(msg), "Humidity[%d]:   %lf %%RH", idx, comp_data.humidity);
-            snprintf(msg, sizeof(msg), "{\"humidity\": %.2lf}", idx, comp_data.humidity);
-
+            snprintf(msg, sizeof(msg), "{\"humidity\": %.2lf}", comp_data.humidity);
 #else
             ESP_LOGI(TAG, "Humidity[%d]:   %lu %%RH", idx, (long unsigned int)comp_data.humidity);
+            snprintf(msg, sizeof(msg), "{\"humidity\": %.2f}", (float)comp_data.humidity);
 #endif
 
             // Use the safe queue wrapper which now uses the global conn_handle internally
             send_notification_safe(msg);
 
-            // idx++;
+            idx++;
         }
 
         // Add a small delay for good measure in a FreeRTOS loop
@@ -282,7 +310,7 @@ void humidity_reader_task(void *)
 
     /* Always set the power mode after setting the configuration */
     rslt = bme280_set_sensor_mode(BME280_POWERMODE_NORMAL, &bme280_dev);
-    print_rslt("bme280_set_power_mode", rslt);
+    print_rslt("bme280_set_sensor_mode", rslt);
     if (rslt != SUCCESS)
     {
         vTaskDelete(NULL);
@@ -301,14 +329,13 @@ void humidity_reader_task(void *)
     ESP_LOGI(TAG, "Measurement time : %lu us", (long unsigned int)period);
     ESP_LOGI(TAG, "Starting %d humidity samples...", SAMPLE_COUNT);
 
-    get_humidity(period, &bme280_dev);
+    get_humidity(period);
 
     ESP_LOGI(TAG, "Humidity sampling complete");
     vTaskDelete(NULL);
 }
 
-
-void humidity_start(void)
+void humidity_init(void)
 {
     ESP_LOGI(TAG, "Starting BME280 and OLED on single, shared I2C Bus (SDA 10 / SCL 11).");
 
@@ -334,7 +361,7 @@ void humidity_start(void)
         // Set the sensor configuration only if initialization was successful
         // (Assuming the bme280_set_sensor_settings and bme280_set_power_mode calls are handled elsewhere 
         // or that the library defaults are good enough for the task to start reading)
-        ESP_LOGI(TAG, "BME280 driver successfully initialized. Starting task.");
-        xTaskCreate(humidity_reader_task, "humidity_reader", 4096, NULL, 5, NULL);
+        ESP_LOGI(TAG, "BME280 driver successfully initialized");
+      //  xTaskCreate(humidity_reader_task, "humidity_reader", 4096, NULL, 5, NULL);
     }
 }

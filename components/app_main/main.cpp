@@ -27,25 +27,12 @@
 #include "constants.h"
 #include "webserver.h"
 
-#include "bme280mgr.h"
+#include "work.h"
 #include "myled.h"
+#include "mysystem.h"
 
 static const char *TAG = "MAIN";
 #define BLINK_DELAY_MS 1000
-
-static void check_psram(void)
-{
-    if (esp_psram_is_initialized())
-    {
-        size_t psram_size = esp_psram_get_size();
-        size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        ESP_LOGI(TAG, "PSRAM initialized: Total size = %u bytes, Free = %u bytes", psram_size, psram_free);
-    }
-    else
-    {
-        ESP_LOGE(TAG, "PSRAM not initialized!");
-    }
-}
 
 void notify_demo_task(void *param)
 {
@@ -79,11 +66,12 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "Failed to initialize NVS JSON: %s", esp_err_to_name(err));
         return;
     }
-    check_psram();
+    MySystem::check_psram();
 
-    gpio_set_direction(RED_LED, GPIO_MODE_OUTPUT);
-    gpio_set_direction(GREEN_LED, GPIO_MODE_OUTPUT);
-    led_set_state(RED_LED, true);
+    init_led(GREEN_LED);
+    init_led(RED_LED);
+    init_led(BLUE_LED);
+    led_set_state(RED_LED, true); // app started indicator
 
     MyWiFi::global_init();
 
@@ -108,9 +96,10 @@ extern "C" void app_main(void)
 
     // If Wi-Fi started successfully (STA or AP mode), proceed with services
     // In AP mode, webserver provides /provision endpoint for credential input + reboot to STA
-    humidity_start();
+    // humidity_start();
+ //   start_work_task();
     start_webserver(); // Start webserver (handles /readings, /provision, etc.)
-
+    MyWiFi::start_mdns();
     // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
     if (MyWiFi::s_sta_netif != nullptr && MyWiFi::isConnected())
     {
@@ -118,17 +107,21 @@ extern "C" void app_main(void)
         MyNTP::syncTime();
     }
 
-    // NEW: Handle provisioning completion in AP mode (wait for BLE/web signal)
-    if (wifi_ret == WIFI_MODE_AP_SUCCESS) {
+    // Handle provisioning completion in AP mode (wait for BLE/web signal)
+    if (wifi_ret == WIFI_MODE_AP_SUCCESS)
+    {
         ESP_LOGI(TAG, "In AP mode: Waiting for provisioning signal...");
-        if (provisioning_sem != NULL && xSemaphoreTake(provisioning_sem, portMAX_DELAY) == pdTRUE) {
+        if (provisioning_sem != NULL && xSemaphoreTake(provisioning_sem, portMAX_DELAY) == pdTRUE)
+        {
             ESP_LOGI(TAG, "Provisioning signaled: Credentials applied, rebooting to STA mode.");
             // Optional: Stop webserver/BLE tasks here if needed for clean shutdown
             // stop_webserver(web_server);
             // ble_provisioning_deinit(); // If you have a deinit function
             vTaskDelay(pdMS_TO_TICKS(1000)); // Brief delay for logs to flush
             esp_restart();
-        } else {
+        }
+        else
+        {
             ESP_LOGW(TAG, "Provisioning semaphore wait failed or timed out.");
         }
     }
@@ -137,11 +130,9 @@ extern "C" void app_main(void)
     // Optional: Add timeout in AP mode to auto-reboot if no provisioning (e.g., after 10min)
     while (1)
     {
-        //  led_set_state(RED_LED, true);
-        //  vTaskDelay(BLINK_DELAY_MS / portTICK_PERIOD_MS);
-
-        //  led_set_state(RED_LED, false);
+        //   led_set_state(RED_LED, true);
         vTaskDelay(1000 / portTICK_PERIOD_MS); // Example: If you have a connected BLE device, send a status message
         // send_message_notification(some_conn_handle, "WiFi Status: Connected");
+        //   led_set_state(RED_LED, false);
     }
 }
