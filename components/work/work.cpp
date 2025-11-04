@@ -49,7 +49,7 @@ void WorkImplementation::do_work()
     char timestamp[32];
     MyNTP::getTimestamp(timestamp, sizeof(timestamp));
 
-    snprintf(msg, sizeof(msg), "{\"humidity\":%.2f,\"timestamp\":\"%s\"}", humidity, timestamp);
+    snprintf(msg, sizeof(msg), "{\"humidity\":%.2f}", humidity);
     send_notification_safe(msg);
     //MyMQTT::publish("diymalls1/well", msg);
     

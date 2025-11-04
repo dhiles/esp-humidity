@@ -229,8 +229,6 @@ void init_humidity_timer(void)
     humidity_timer_callback(NULL);
 }
 
-
-
 void start_custom_webserver()
 {
     httpd_handle_t server = start_webserver(true);
