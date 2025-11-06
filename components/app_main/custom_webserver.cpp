@@ -221,7 +221,7 @@ void init_humidity_timer(void)
     };
     
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &humidity_timer_handle));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(humidity_timer_handle, 30000000)); // 30 seconds in microseconds
+    ESP_ERROR_CHECK(esp_timer_start_periodic(humidity_timer_handle, 1000000)); // 30 seconds in microseconds
     
     ESP_LOGI(TAG, "Humidity update timer started (30 seconds interval)");
     
