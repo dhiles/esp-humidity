@@ -13,8 +13,8 @@ static const char *TAG = "BME280_OLED";
 
 // --- I2C Configuration ---
 // Single Shared Bus Pins (Only use the pins where devices were found)
-#define SHARED_SDA_IO 10
-#define SHARED_SCL_IO 11
+#define SHARED_SDA_IO 1
+#define SHARED_SCL_IO 2
 
 // BME280 Device Settings
 #define BME280_I2C_ADDR 0x77
