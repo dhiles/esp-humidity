@@ -12,7 +12,7 @@ dependencies:
   espressif/i2c_bus:
     dependencies: []
     source:
-      path: /home/douglas/dev/esp-inf/esp-humidity/components/espressif__i2c_bus
+      path: /media/evo1/esp-inf/esp-humidity/components/espressif__i2c_bus
       type: local
     version: 1.4.2
   espressif/mdns:

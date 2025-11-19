@@ -27,26 +27,9 @@
 #include "myled.h"
 #include "mysystem.h"
 #include "custom_webserver.h"
+#include "loop.h"
 
 static const char *TAG = "MAIN";
-#define BLINK_DELAY_MS 1000
-
-void notify_demo_task(void *param)
-{
-    int counter = 0;
-    while (1)
-    { // Run until disconnect (handled in gap_cb)
-
-        char msg[50];
-        snprintf(msg, sizeof(msg), "notify_demo_task #%d: Hello from ESP32!", ++counter);
-
-        // Use the safe queue wrapper which now uses the global conn_handle internally
-        send_notification_safe(msg);
-        //  ESP_LOGI(TAG, msg);
-        vTaskDelay(pdMS_TO_TICKS(5000)); // Every 5s
-    }
-    vTaskDelete(NULL);
-}
 
 // =================================================================
 // APP ENTRY POINT
@@ -55,6 +38,7 @@ extern "C" void app_main(void)
 {
     esp_log_level_set("MYLED", ESP_LOG_NONE);
     // esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
+    esp_log_level_set("CUSTOM_WEBSERVER", ESP_LOG_NONE);
 
     // Initialize all NVS JSON objects
     esp_err_t err = init_nvs_json_all();
@@ -89,13 +73,34 @@ extern "C" void app_main(void)
         return;
     }
 
-    ble_provisioning_init(false);
+    //ble_provisioning_init(false);
+    //start_work_task();
 
-    // If Wi-Fi started successfully (STA or AP mode), proceed with services
-    // In AP mode, webserver provides /provision endpoint for credential input + reboot to STA
-    // humidity_start();
-    // WorkImplementation::getInstance().init_work();
-    start_work_task();
+        // Prepare parameters for the task
+    sleep_loop_params_t params = {
+        .sleep_duration = 30,
+        .mqtt_uri = MQTTConfig::URI,
+        .work_impl = &WorkImplementation::getInstance()
+    };
+
+    // Create the sleep_loop task
+    BaseType_t task_created = xTaskCreate(
+        sleep_loop_task,           // Task function
+        "sleep_loop_task",        // Task name
+        16384,                     // Stack size (adjust as needed)
+        &params,                  // Task parameters
+        5,                        // Task priority
+        NULL                      // Task handle (NULL if not needed)
+    );
+
+    if (task_created != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create sleep_loop task");
+        return;
+    }
+
+    ESP_LOGI(TAG, "sleep_loop task created successfully");
+
+
     start_custom_webserver(); 
     // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
     if (MyWiFi::s_sta_netif != nullptr && MyWiFi::isConnected())

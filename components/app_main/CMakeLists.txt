@@ -18,6 +18,7 @@ idf_component_register(
         driver 
         bme280         
         bt
+        esp_hw_support
 
     PRIV_REQUIRES
         # Private dependencies

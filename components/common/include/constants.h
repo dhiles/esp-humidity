@@ -1,8 +1,8 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#define GREEN_LED GPIO_NUM_7
-#define BLUE_LED GPIO_NUM_8
+#define GREEN_LED GPIO_NUM_8
+#define BLUE_LED GPIO_NUM_7
 #define RED_LED GPIO_NUM_6
 
 // Hardcoded constants (compile-time)
