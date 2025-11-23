@@ -73,9 +73,9 @@ extern "C" void app_main(void)
         return;
     }
 
-    //ble_provisioning_init(false);
-    //start_work_task();
-
+    ble_provisioning_init(false);
+    start_work_task();
+/*
         // Prepare parameters for the task
     sleep_loop_params_t params = {
         .sleep_duration = 30,
@@ -99,7 +99,7 @@ extern "C" void app_main(void)
     }
 
     ESP_LOGI(TAG, "sleep_loop task created successfully");
-
+*/
 
     start_custom_webserver(); 
     // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
