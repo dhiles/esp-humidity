@@ -10,7 +10,7 @@
 #include "mymqtt.h"
 #include "ble_provisioning.h"
 
-#define WORK_SAMPLE_PERIOD_MS 1000
+#define WORK_SAMPLE_PERIOD_MS 30000
 
 class WorkImplementation : public WorkInterface {
 private:
