@@ -36,6 +36,7 @@ static const char *TAG = "MAIN";
 // =================================================================
 extern "C" void app_main(void)
 {
+    ESP_LOGI(TAG, "Permanent 8-char Device ID: %s", MySystem::get_device_id());
     esp_log_level_set("MYLED", ESP_LOG_NONE);
     // esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
     esp_log_level_set("CUSTOM_WEBSERVER", ESP_LOG_NONE);

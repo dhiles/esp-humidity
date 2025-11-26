@@ -34,4 +34,9 @@ namespace FileSrv {
     //constexpr char URL[] = "https://rr260filesrv.canactiveindustries.com/upload";
 }
 
+namespace deviceIPSrv {
+    constexpr char SETIP_URL[] = "https://deviceip.canactiveindustries.com/setIP";
+}
+
+
 #endif // CONSTANTS_H
