@@ -12,35 +12,38 @@
 
 #define WORK_SAMPLE_PERIOD_MS 30000
 
-class WorkImplementation : public WorkInterface {
+class WorkImplementation : public WorkInterface
+{
 private:
     static WorkImplementation* instance;
-    char msg[512];
-    float humidity;
-    int sampleCount = 0;
 
-    // Private constructor
+    char     msg[512]{};
+    float    humidity{0.0f};
+    float    temperature{0.0f};
+    uint32_t sampleCount{0};
+
     WorkImplementation();
 
 public:
-    // Delete copy constructor and assignment operator
     WorkImplementation(const WorkImplementation&) = delete;
     WorkImplementation& operator=(const WorkImplementation&) = delete;
 
-    // Static method to get the singleton instance
     static WorkImplementation& getInstance();
-
     virtual ~WorkImplementation() = default;
 
-    void init_work() override;
-    void do_work() override;
-    void end_work() override;
-    void deinit_work() override;
+    void init_work()    override;
+    void do_work()      override;
+    void end_work()     override;
+    void deinit_work()  override;
     const char* getMessage() override;
     void logE(const char* format, ...) override;
+
+    // Optional convenience getters — declared only, defined in .cpp if you want them
+    float getHumidity() const;
+    float getTemperature() const;
+    uint32_t getSampleCount() const;
 };
 
-// Function declarations
 void start_work_task();
 const char* get_current_work_message();
 

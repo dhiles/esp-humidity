@@ -16,7 +16,6 @@ idf_component_register(
         esp_lcd
         fatfs
         driver 
-        bme280         
         bt
         esp_hw_support
 

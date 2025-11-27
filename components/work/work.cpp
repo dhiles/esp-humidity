@@ -1,64 +1,110 @@
+// components/work/work.cpp
 #include "work.h"
-#include "bme280mgr.h"
+#include <cstdio>
+#include <cstdarg>
+#include <cstring>
+#include <esp_log.h>
+
+// External SHT3x functions (implemented in your sht3x.c or component)
+extern "C" {
+    void sht3x_init(void);
+    esp_err_t get_sht3x_reading(float *temperature, float *humidity);
+}
 
 static constexpr const char *TAG = "WORK";
 
-// Initialize the static instance pointer
+// ====================================================================
+// Singleton static instance
+// ====================================================================
 WorkImplementation* WorkImplementation::instance = nullptr;
 
+// ====================================================================
+// Constructor (private)
+// ====================================================================
 WorkImplementation::WorkImplementation()
 {
     memset(msg, 0, sizeof(msg));
     humidity = 0.0f;
+    temperature = 0.0f;
     sampleCount = 0;
 }
 
-WorkImplementation& WorkImplementation::getInstance() {
+// ====================================================================
+// Singleton accessor
+// ====================================================================
+WorkImplementation& WorkImplementation::getInstance()
+{
+    // Thread-safe in C++11+ (static local init is thread-safe)
     if (instance == nullptr) {
         instance = new WorkImplementation();
     }
     return *instance;
 }
 
+// ====================================================================
+// Interface method implementations
+// ====================================================================
+
 void WorkImplementation::init_work()
 {
-    ESP_LOGI(TAG, "Starting work..");
-    char timestamp[32];
+    ESP_LOGI(TAG, "Initializing SHT3x-based work task...");
+
+    char timestamp[40] = {0};
     MyNTP::getTimestamp(timestamp, sizeof(timestamp));
-    snprintf(msg, sizeof(msg), "{\"humidity\":%.2f,\"timestamp\":\"%s\"}", -127.0, timestamp);
-    humidity_init();
+
+    // Initial dummy message (invalid values)
+    snprintf(msg, sizeof(msg),
+             "{\"temp\":-127.00,\"humidity\":-127.00,\"timestamp\":\"%s\"}",
+             timestamp);
+
+    // Initialize the SHT3x sensor (I2C bus + soft reset + test read)
+    sht3x_init();
+
+    ESP_LOGI(TAG, "Work initialization complete. Sampling every %d ms", WORK_SAMPLE_PERIOD_MS);
 }
 
 void WorkImplementation::do_work()
 {
-    ESP_LOGI(TAG, "Performing work...");
-    float current_humidity;
-    int8_t result = getHumidityReading(&current_humidity);
-    if (result == SUCCESS)
-    {
-        ESP_LOGI(TAG, "Got humidity: %.2f%%", current_humidity);
-        humidity = current_humidity;
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Failed to read humidity");
-        humidity = -127.0f;
+    ESP_LOGD(TAG, "do_work() - sample %lu", sampleCount);
+
+    float temp = -127.0f;
+    float rh   = -127.0f;
+
+    esp_err_t ret = get_sht3x_reading(&temp, &rh);
+
+    if (ret == ESP_OK) {
+        temperature = temp;
+        humidity    = rh;
+
+        ESP_LOGI(TAG, "SHT3x [Sample %lu] → %.2f °C | %.2f %%RH",
+                 sampleCount, temperature, humidity);
+    } else {
+        ESP_LOGE(TAG, "Failed to read SHT3x: %s (0x%x)", esp_err_to_name(ret), ret);
+        temperature = -127.0f;
+        humidity    = -127.0f;
     }
 
-    ESP_LOGI(TAG, "Sample %d: = %.2f %%RH", sampleCount, humidity);
-    char timestamp[32];
+    // Get current timestamp
+    char timestamp[40] = {0};
     MyNTP::getTimestamp(timestamp, sizeof(timestamp));
 
-    snprintf(msg, sizeof(msg), "{\"humidity\":%.2f}", humidity);
+    // Build final JSON message
+    snprintf(msg, sizeof(msg),
+             "{\"temp\":%.2f,\"humidity\":%.2f,\"timestamp\":\"%s\"}",
+             temperature, humidity, timestamp);
+
+    // Send via BLE (your existing safe function)
     send_notification_safe(msg);
-    //MyMQTT::publish("diymalls1/well", msg);
-    
+
+    // Optional: MQTT publish
+    // MyMQTT::publish("home/bedroom/sensor", msg);
+
     sampleCount++;
 }
 
 void WorkImplementation::end_work()
 {
-    ESP_LOGI(TAG, "Ending work...");
+    ESP_LOGI(TAG, "end_work() called");
 }
 
 void WorkImplementation::deinit_work()
@@ -66,12 +112,29 @@ void WorkImplementation::deinit_work()
     ESP_LOGI(TAG, "Deinitializing work...");
     memset(msg, 0, sizeof(msg));
     humidity = 0.0f;
+    temperature = 0.0f;
     sampleCount = 0;
 }
 
-const char *WorkImplementation::getMessage()
+const char* WorkImplementation::getMessage()
 {
     return msg;
+}
+
+// Optional convenience getters (defined here, not inline in header)
+float WorkImplementation::getHumidity() const
+{
+    return humidity;
+}
+
+float WorkImplementation::getTemperature() const
+{
+    return temperature;
+}
+
+uint32_t WorkImplementation::getSampleCount() const
+{
+    return sampleCount;
 }
 
 void WorkImplementation::logE(const char* format, ...)
@@ -82,41 +145,48 @@ void WorkImplementation::logE(const char* format, ...)
     va_end(args);
 }
 
-// Static task function
+// ====================================================================
+// FreeRTOS task wrapper
+// ====================================================================
 static void work_task_function(void *pvParameters)
 {
-    WorkImplementation::getInstance().init_work();
-    while (1)
-    {
-        WorkImplementation::getInstance().do_work();
+    (void)pvParameters;
+
+    auto& work = WorkImplementation::getInstance();
+    work.init_work();
+
+    while (true) {
+        work.do_work();
         vTaskDelay(pdMS_TO_TICKS(WORK_SAMPLE_PERIOD_MS));
     }
-    WorkImplementation::getInstance().deinit_work();
+
+    // Never reached
+    work.deinit_work();
     vTaskDelete(NULL);
 }
 
+// ====================================================================
+// Public task starter
+// ====================================================================
 void start_work_task()
 {
     BaseType_t result = xTaskCreate(
         work_task_function,
         "work_task",
         4096,
-        NULL,
+        nullptr,
         5,
-        NULL
+        nullptr
     );
 
-    if (result != pdPASS)
-    {
-        ESP_LOGE("WORK", "Failed to create work task");
-    }
-    else
-    {
-        ESP_LOGI("WORK", "Work task started successfully");
+    if (result == pdPASS) {
+        ESP_LOGI(TAG, "Work task started successfully (SHT3x mode)");
+    } else {
+        ESP_LOGE(TAG, "FAILED to create work task!");
     }
 }
 
-const char *get_current_work_message()
+const char* get_current_work_message()
 {
     return WorkImplementation::getInstance().getMessage();
 }
