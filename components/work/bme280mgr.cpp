@@ -21,8 +21,8 @@ static const char *TAG = "BME280_OLED";
 #define BME280_FREQ_HZ 100000
 
 // OLED SSD1306 Device Settings
-#define SSD1306_ADDR 0x3C
-#define OLED_FREQ_HZ 400000 
+//#define SSD1306_ADDR 0x3C
+//#define OLED_FREQ_HZ 400000 
 
 #define BME280_INIT_VALUE -1
 #define SAMPLE_COUNT UINT8_C(50)
