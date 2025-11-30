@@ -47,13 +47,6 @@ struct bme280_data comp_data;
 
 void i2c_master_init_single_bus(void)
 {
-    // FIX FOR COMPILATION ERROR: The 'sda_pullup_en' field is missing in this ESP-IDF version.
-    // We enable internal pull-ups using the standard GPIO function instead, 
-    // which must be done BEFORE creating the I2C bus.
-    ESP_LOGI(TAG, "Setting internal pull-ups on SDA(%d) and SCL(%d) via GPIO functions.", SHARED_SDA_IO, SHARED_SCL_IO);
-    ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)SHARED_SDA_IO, GPIO_PULLUP_ONLY));
-    ESP_ERROR_CHECK(gpio_set_pull_mode((gpio_num_t)SHARED_SCL_IO, GPIO_PULLUP_ONLY));
-
 
     // --- 1. Single Shared Bus Configuration (Pins 10/11) ---
     i2c_master_bus_config_t bus_config_single = {
@@ -61,12 +54,18 @@ void i2c_master_init_single_bus(void)
         .scl_io_num = (gpio_num_t)SHARED_SCL_IO,
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7, 
-        // .sda_pullup_en and .scl_pullup_en are REMOVED here to fix the compile error.
+        .flags = {},
     };
+    bus_config_single.flags.enable_internal_pullup = false;
     // Initialize the shared bus
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config_single, &i2c_bus_single));
-    ESP_LOGI(TAG, "MODERN I2C Bus initialized on SDA:%d, SCL:%d for BME280 and OLED.", SHARED_SDA_IO, SHARED_SCL_IO);
+    ESP_LOGI(TAG, "MODERN I2C Bus initialized on SDA:%d, SCL:%d", SHARED_SDA_IO, SHARED_SCL_IO);
 
+    if (i2c_master_probe(i2c_bus_single, BME280_I2C_ADDR, pdMS_TO_TICKS(100)) == ESP_OK) {
+        ESP_LOGI(TAG, "Device BME280 (0x%02X) available.", BME280_I2C_ADDR);
+    } else {
+        ESP_LOGE(TAG, "Device BME280 (0x%02X) not available.", BME280_I2C_ADDR);
+    }
 
     // --- 2. BME280 Device Configuration (0x77) ---
     i2c_device_config_t dev_config_bme = {
