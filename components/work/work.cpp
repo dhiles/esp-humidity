@@ -84,11 +84,16 @@ void WorkImplementation::do_work()
     MyNTP::getTimestamp(timestamp, sizeof(timestamp));
 
     // Build final JSON message
-    snprintf(msg, sizeof(msg),
-             "{\"temp\":%.2f,\"humidity\":%.2f,\"timestamp\":\"%s\"}",
-             temperature, humidity, timestamp);
+  //  snprintf(msg, sizeof(msg),
+  //           "{\"temp\":%.2f,\"humidity\":%.2f,\"timestamp\":\"%s\"}",
+  //           temperature, humidity, timestamp);
 
-    // Send via BLE (your existing safe function)
+    // Build final JSON message
+    snprintf(msg, sizeof(msg),
+             "{\"humidity\":%.2f}",
+             humidity);
+
+             // Send via BLE (your existing safe function)
     send_notification_safe(msg);
 
     // Optional: MQTT publish
