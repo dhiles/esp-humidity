@@ -11,8 +11,8 @@ static const char *TAG = "SHT3X";
 // ====================================================================
 // I2C Configuration - Using clean GPIOs 7/8
 // ====================================================================
-#define SHT3X_SDA_IO         GPIO_NUM_7
-#define SHT3X_SCL_IO         GPIO_NUM_8  
+#define SHT3X_SDA_IO         GPIO_NUM_1
+#define SHT3X_SCL_IO         GPIO_NUM_2  
 #define SHT3X_I2C_ADDR       0x44
 
 // SHT3x Commands (Section 4.3)

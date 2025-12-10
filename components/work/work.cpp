@@ -4,12 +4,7 @@
 #include <cstdarg>
 #include <cstring>
 #include <esp_log.h>
-
-// External SHT3x functions (implemented in your sht3x.c or component)
-extern "C" {
-    void sht3x_init(void);
-    esp_err_t get_sht3x_reading(float *temperature, float *humidity);
-}
+#include "sht4xmgr.h"
 
 static constexpr const char *TAG = "WORK";
 
@@ -47,7 +42,7 @@ WorkImplementation& WorkImplementation::getInstance()
 
 void WorkImplementation::init_work()
 {
-    ESP_LOGI(TAG, "Initializing SHT3x-based work task...");
+    ESP_LOGI(TAG, "Initializing SHT4x-based work task...");
 
     char timestamp[40] = {0};
     MyNTP::getTimestamp(timestamp, sizeof(timestamp));
@@ -57,8 +52,8 @@ void WorkImplementation::init_work()
              "{\"temp\":-127.00,\"humidity\":-127.00,\"timestamp\":\"%s\"}",
              timestamp);
 
-    // Initialize the SHT3x sensor (I2C bus + soft reset + test read)
-    sht3x_init();
+    // Initialize the SHT4x sensor (I2C bus + soft reset + test read)
+    sht4x_init();
 
     ESP_LOGI(TAG, "Work initialization complete. Sampling every %d ms", WORK_SAMPLE_PERIOD_MS);
 }
@@ -70,16 +65,16 @@ void WorkImplementation::do_work()
     float temp = -127.0f;
     float rh   = -127.0f;
 
-    esp_err_t ret = get_sht3x_reading(&temp, &rh);
+    esp_err_t ret = sht4x_measure_high_precision(&temp, &rh);
 
     if (ret == ESP_OK) {
         temperature = temp;
         humidity    = rh;
 
-        ESP_LOGI(TAG, "SHT3x [Sample %lu] → %.2f °C | %.2f %%RH",
+        ESP_LOGI(TAG, "SHT4x [Sample %lu] → %.2f °C | %.2f %%RH",
                  sampleCount, temperature, humidity);
     } else {
-        ESP_LOGE(TAG, "Failed to read SHT3x: %s (0x%x)", esp_err_to_name(ret), ret);
+        ESP_LOGE(TAG, "Failed to read SHT4x: %s (0x%x)", esp_err_to_name(ret), ret);
         temperature = -127.0f;
         humidity    = -127.0f;
     }
@@ -173,7 +168,7 @@ void start_work_task()
     BaseType_t result = xTaskCreate(
         work_task_function,
         "work_task",
-        4096,
+        8192,
         nullptr,
         5,
         nullptr

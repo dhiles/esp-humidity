@@ -1,7 +1,7 @@
 idf_component_register(
     INCLUDE_DIRS "."
     
-    SRCS "work.cpp" "sht3xmgr.cpp"
+    SRCS "sht4xmgr.cpp" "work.cpp"
 
     REQUIRES
         esp32-shared 
