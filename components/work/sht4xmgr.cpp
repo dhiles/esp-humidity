@@ -11,8 +11,8 @@ static const char *TAG = "SHT40";
 // ====================================================================
 // SHT40 Configuration (uses GPIO 1 & 2 as before)
 // ====================================================================
-#define SHT4X_SDA_IO           GPIO_NUM_1
-#define SHT4X_SCL_IO           GPIO_NUM_2
+#define SHT4X_SDA_IO           GPIO_NUM_2
+#define SHT4X_SCL_IO           GPIO_NUM_1
 #define SHT4X_I2C_ADDR         0x44        // Fixed address for SHT40
 
 // ====================================================================

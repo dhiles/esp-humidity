@@ -2,6 +2,8 @@
 # Waveshare ESP32-S3-Zero (4 MB flash, no PSRAM) – PERMANENT SETTINGS
 # ──────────────────────────────────────────────────────────────────────
 
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
 # Custom partitions (enforces full 4 MB layout)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
