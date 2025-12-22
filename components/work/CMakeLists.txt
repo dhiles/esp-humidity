@@ -4,7 +4,8 @@ idf_component_register(
     SRCS "sht4xmgr.cpp" "work.cpp"
 
     REQUIRES
-        esp32-shared 
+        esp32-shared
+        esp32-data 
         json
         common
         esp_lcd

@@ -10,7 +10,8 @@ idf_component_register(
     REQUIRES
         common
         work
-        esp32-shared 
+        esp32-shared
+        esp32-data 
         esp_http_server
         esp_timer
         esp_lcd

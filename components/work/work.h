@@ -9,6 +9,7 @@
 #include "myntp.h"
 #include "mymqtt.h"
 #include "ble_provisioning.h"
+#include "sensor_data_manager.h"
 
 #define WORK_SAMPLE_PERIOD_MS 30000
 
@@ -16,7 +17,7 @@ class WorkImplementation : public WorkInterface
 {
 private:
     static WorkImplementation* instance;
-
+    static SensorDataManager& sensorDataManager;
     char     msg[512]{};
     float    humidity{0.0f};
     float    temperature{0.0f};

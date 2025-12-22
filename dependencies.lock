@@ -1,4 +1,14 @@
 dependencies:
+  espressif/cjson:
+    component_hash: 9372811fb197926f522c467627cf4a8e72b681e0366e17879631da801103aef3
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -30,10 +40,11 @@ dependencies:
       type: idf
     version: 5.5.1
 direct_dependencies:
+- espressif/cjson
 - espressif/cmake_utilities
 - espressif/i2c_bus
 - espressif/mdns
 - idf
-manifest_hash: 6b012046a5cfcef14dc9a4dcfc3b83f114ac54604a9a37119158835037e541f5
+manifest_hash: 52d3e2b0363a9634c897eafa8a254332e52928f42ef2357f94d4e60da0a867e5
 target: esp32s3
 version: 2.0.0
