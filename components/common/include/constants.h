@@ -17,8 +17,8 @@ constexpr float SENSOR_THRESHOLD = 25.0f;
 extern const char* APP_VERSION;  // Defined in a .cpp if value is set at runtime
 
 namespace WiFiConfig {
-    constexpr char SSID[] = "tplink2dot4"; //"dishy2";
-    constexpr char PASSWORD[] =  "hhhh4100"; // "elon$1971";
+    constexpr char SSID[] = "";
+    constexpr char PASSWORD[] =  "";
     constexpr char MDNS_HOSTNAME[] = "humidoer";
     constexpr char MDNS_INSTANCENAME[] = "humidoer";
 }

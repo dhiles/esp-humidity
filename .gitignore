@@ -1,3 +1,4 @@
 build/
 components/esp32-shared/
+components/esp32-data/
 managed_components/
