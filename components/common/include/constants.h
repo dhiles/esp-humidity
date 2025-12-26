@@ -1,8 +1,8 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#define GREEN_LED GPIO_NUM_8
-#define BLUE_LED GPIO_NUM_7
+#define GREEN_LED GPIO_NUM_10
+#define BLUE_LED GPIO_NUM_11
 #define RED_LED GPIO_NUM_6
 
 // Hardcoded constants (compile-time)
@@ -34,9 +34,11 @@ namespace FileSrv {
     //constexpr char URL[] = "https://rr260filesrv.canactiveindustries.com/upload";
 }
 
-namespace deviceIPSrv {
+namespace device {
     constexpr char SETIP_URL[] = "https://deviceip.canactiveindustries.com/setIP";
+    constexpr char TYPE[] = "HUMD";
 }
+
 
 
 #endif // CONSTANTS_H

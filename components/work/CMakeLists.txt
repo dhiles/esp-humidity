@@ -1,12 +1,12 @@
 idf_component_register(
     INCLUDE_DIRS "."
     
-    SRCS "work.cpp" "bme280mgr.cpp"
+    SRCS "sht4xmgr.cpp" "work.cpp"
 
     REQUIRES
-        esp32-shared 
+        esp32-shared
+        esp32-data 
         json
-        bme280
         common
         esp_lcd
 )
