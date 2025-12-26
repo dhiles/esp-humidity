@@ -57,9 +57,8 @@ void WorkImplementation::init_work()
     // Initialize the SHT4x sensor (I2C bus + soft reset + test read)
     sht4x_init();
 
-    SensorDataManager &sensorDataManager = SensorDataManager::getInstance();
     // Initialize with 10,000 entries
-    if (sensorDataManager.init(10000) != ESP_OK)
+    if (SensorDataManager::getInstance().init(10000) != ESP_OK)
     {
         ESP_LOGE("MAIN", "Failed to initialize SensorDataManager");
         while (1)
@@ -119,6 +118,8 @@ void WorkImplementation::do_work()
     SensorData data(current_time, 1);
     data.addValue(SensorType::TEMPERATURE, temperature);
     data.addValue(SensorType::HUMIDITY, humidity);
+    data.updateChecksum();
+    SensorDataManager::getInstance().add(data);
 
     // Get current timestamp
     char timestamp[40] = {0};

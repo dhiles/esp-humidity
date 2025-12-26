@@ -16,6 +16,8 @@ public:
     SensorDataCircularBuffer() : buffer_(nullptr), capacity_(0), count_(0), head_(0), tail_(0) {}
     ~SensorDataCircularBuffer() { free(); }
 
+    size_t capacity() const { return capacity_; }
+    
     /**
      * @brief Initialize the circular buffer in PSRAM
      * @param max_rows Maximum number of SensorData objects to store
