@@ -19,3 +19,8 @@ dependencies:
   espressif/mdns: '*'
 
   espressif/cjson: "^1.7.19"
+
+  esp32-shared: 
+    git: https://github.com/dhiles/esp32-shared.git  
+  esp32-data: 
+    git: https://github.com/dhiles/esp32-data.git  

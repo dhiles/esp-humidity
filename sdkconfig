@@ -2626,15 +2626,6 @@ CONFIG_WIFI_PROV_STA_ALL_CHANNEL_SCAN=y
 # end of Wi-Fi Provisioning Manager
 
 #
-# ESP32 Shared Configuration
-#
-CONFIG_ENABLE_MQTT=y
-CONFIG_ENABLE_WIFI=y
-# CONFIG_ENABLE_SLEEPLOOP is not set
-CONFIG_ENABLE_BLE_PROVISIONING=y
-# end of ESP32 Shared Configuration
-
-#
 # Bus Options
 #
 
@@ -2648,6 +2639,15 @@ CONFIG_I2C_MS_TO_WAIT=200
 # CONFIG_I2C_BUS_REMOVE_NULL_MEM_ADDR is not set
 # end of I2C Bus Options
 # end of Bus Options
+
+#
+# ESP32 Shared Configuration
+#
+CONFIG_ENABLE_MQTT=y
+CONFIG_ENABLE_WIFI=y
+# CONFIG_ENABLE_SLEEPLOOP is not set
+CONFIG_ENABLE_BLE_PROVISIONING=y
+# end of ESP32 Shared Configuration
 
 #
 # CMake Utilities

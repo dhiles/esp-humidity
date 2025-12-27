@@ -1,4 +1,20 @@
 dependencies:
+  esp32-data:
+    component_hash: 27440c7eb3e76b164e9adb7b58846a809a0470e8e51fefed78afdc9bf0b36688
+    dependencies: []
+    source:
+      git: https://github.com/dhiles/esp32-data.git
+      path: .
+      type: git
+    version: d4c26a127f1aa33990fc5112da9e3179fc3a1e55
+  esp32-shared:
+    component_hash: 9326b27db4bea5c4d36186b9b68efc266ab9cdc8b3780e04ab82d18efc029633
+    dependencies: []
+    source:
+      git: https://github.com/dhiles/esp32-shared.git
+      path: .
+      type: git
+    version: 7326396a8dfa11e83b5372ff91b17ad76d577c43
   espressif/cjson:
     component_hash: 9372811fb197926f522c467627cf4a8e72b681e0366e17879631da801103aef3
     dependencies:
@@ -40,11 +56,13 @@ dependencies:
       type: idf
     version: 5.5.1
 direct_dependencies:
+- esp32-data
+- esp32-shared
 - espressif/cjson
 - espressif/cmake_utilities
 - espressif/i2c_bus
 - espressif/mdns
 - idf
-manifest_hash: 52d3e2b0363a9634c897eafa8a254332e52928f42ef2357f94d4e60da0a867e5
+manifest_hash: ae75e6521f819157290ef13ffd358f3b8686d31a4184aa024a4bd0e210fc7d7d
 target: esp32s3
 version: 2.0.0
