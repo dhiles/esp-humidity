@@ -1,0 +1,18 @@
+#ifndef SEND_PICTURE_H
+#define SEND_PICTURE_H
+
+#include "esp_camera.h"
+
+typedef struct {
+    bool success;
+    int bytesReceived;
+    char fileName[64];
+    char message[128];
+    char error[128];
+} UploadResponse;
+
+bool sendPicture(const char *camName, camera_fb_t *fb, UploadResponse &response);
+void transfer_fb(const char *camName, camera_fb_t *fb);
+void init_ntp(); // Optional NTP time sync
+
+#endif
