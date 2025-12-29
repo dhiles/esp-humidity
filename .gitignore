@@ -1,8 +1,6 @@
 build/
 components/esp32-shared/
 components/esp32-data/
-managed_components/espressif__cjson/
-managed_components/espressif__cmake_utilities
-managed_components/espressif__mdns
+managed_components/
 
 .aider*

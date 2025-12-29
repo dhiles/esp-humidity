@@ -361,8 +361,10 @@ esp_err_t api_sensors_latest_get_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    // Use the same reliable method as /api/sensors?count=N
-    const SensorData *latest = mgr.getAt(total - 1);  // newest = last index
+    // Use the suggested reliable method to get the latest data
+    const size_t headIndex = mgr.getHeadIndex();
+    const size_t capacity = mgr.getBuffer().capacity();
+    const SensorData *latest = mgr.getAt((headIndex == 0) ? (capacity - 1) : (headIndex - 1));
 
     if (!latest || latest->isEmpty()) {
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Latest reading is empty");
