@@ -108,6 +108,14 @@ extern "C" void app_main(void)
     {
         MyNTP::initialize();
         MyNTP::syncTime();
+        // --- MQTT Connection Attempt ---
+        if (MyMQTT::connect( MQTTConfig::URI) != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to connect MQTT. Disconnecting WiFi and retrying.");
+            MyMQTT::shutdown();            // Shutdown MQTT
+        } else {
+            ESP_LOGI(TAG, "connected to MQTT.");
+        }
     }
 
     // Handle provisioning completion in AP mode (wait for BLE/web signal)

@@ -1,8 +1,8 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#define GREEN_LED GPIO_NUM_10
-#define BLUE_LED GPIO_NUM_11
+#define GREEN_LED GPIO_NUM_8
+#define BLUE_LED GPIO_NUM_7
 #define RED_LED GPIO_NUM_6
 
 // Hardcoded constants (compile-time)
@@ -26,7 +26,7 @@ namespace WiFiConfig {
 namespace MQTTConfig {
     constexpr char URI[] = "mqtt://192.168.1.101:1883";
     //constexpr char URI[] = "ws://rr260mqtt.canactiveindustries.com:8080";
-    constexpr char CAM1[] = "acreage/cam1";
+    constexpr char CAM1[] = "acreage/well";
 }
 
 namespace FileSrv {

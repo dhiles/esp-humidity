@@ -52,6 +52,7 @@ void WorkImplementation::init_work()
     // Initial dummy message (invalid values)
     snprintf(msg, sizeof(msg),
              "{\"temp\":-127.00,\"humidity\":-127.00,\"timestamp\":\"%s\"}",
+             "{\"humidity\":-127.00}",
              timestamp);
 
     // Initialize the SHT4x sensor (I2C bus + soft reset + test read)
@@ -64,29 +65,6 @@ void WorkImplementation::init_work()
         while (1)
             vTaskDelay(1000);
     }
-/*
-    // Add sensor data using the new MyNTP::getEpochTimestamp()
-    for (size_t i = 0; i < 15000; ++i)
-    {
-        uint32_t current_time = MyNTP::getEpochTimestamp();
-        if (current_time == 0)
-        {
-            ESP_LOGE("MAIN", "Failed to get valid epoch timestamp - skipping reading");
-            continue;
-        }
-
-        SensorData data(current_time, 1);
-        data.addValue(SensorType::TEMPERATURE, 22.5f + (i % 100) * 0.1f);
-        data.addValue(SensorType::HUMIDITY, 50.0f + (i % 100) * 0.2f);
-        data.addValue(SensorType::PRESSURE, 1013.25f + (i % 50) * 0.05f);
-        data.updateChecksum();
-
-        mgr.add(data);
-
-        // Simulate realistic sampling
-        vTaskDelay(pdMS_TO_TICKS(100)); // 10 samples/second
-    }
-*/
     ESP_LOGI(TAG, "Work initialization complete. Sampling every %d ms", WORK_SAMPLE_PERIOD_MS);
 }
 
@@ -116,19 +94,10 @@ void WorkImplementation::do_work()
 
     uint32_t current_time = MyNTP::getEpochTimestamp();
     SensorData data(current_time, 1);
-    data.addValue(SensorType::TEMPERATURE, temperature);
+
     data.addValue(SensorType::HUMIDITY, humidity);
     data.updateChecksum();
     SensorDataManager::getInstance().add(data);
-
-    // Get current timestamp
-    char timestamp[40] = {0};
-    MyNTP::getTimestamp(timestamp, sizeof(timestamp));
-
-    // Build final JSON message
-    //  snprintf(msg, sizeof(msg),
-    //           "{\"temp\":%.2f,\"humidity\":%.2f,\"timestamp\":\"%s\"}",
-    //           temperature, humidity, timestamp);
 
     // Build final JSON message
     snprintf(msg, sizeof(msg),
@@ -138,8 +107,14 @@ void WorkImplementation::do_work()
     // Send via BLE (your existing safe function)
     send_notification_safe(msg);
 
-    // Optional: MQTT publish
-    // MyMQTT::publish("home/bedroom/sensor", msg);
+    char timestamp[32];
+    MyNTP::getTimestamp(timestamp, sizeof(timestamp));
+
+    // Use a safely sized static buffer
+    snprintf(msg, sizeof(msg), "{\"humidity\":%.2f,\"temperature\":%.2f,\"timestamp\":\"%s\"}", humidity, temperature, timestamp);
+
+    // Publish to MQTT - function returns void so we can't check for errors
+    MyMQTT::publish("acreage/well", msg);
 
     sampleCount++;
 }
@@ -223,7 +198,8 @@ void start_work_task()
 
     if (result == pdPASS)
     {
-        ESP_LOGI(TAG, "Work task started successfully (SHT3x mode)");
+
+        ESP_LOGI(TAG, "Work task started successfully (SHT4x mode)");
     }
     else
     {
