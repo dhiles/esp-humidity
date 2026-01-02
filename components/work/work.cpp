@@ -58,13 +58,14 @@ void WorkImplementation::init_work()
     // Initialize the SHT4x sensor (I2C bus + soft reset + test read)
     sht4x_init();
 
+ /*   
     // Initialize with 10,000 entries
-    if (SensorDataManager::getInstance().init(10000) != ESP_OK)
+    if (SensorDataManager::getInstance().init(1000) != ESP_OK)
     {
         ESP_LOGE("MAIN", "Failed to initialize SensorDataManager");
         while (1)
             vTaskDelay(1000);
-    }
+    } */
     ESP_LOGI(TAG, "Work initialization complete. Sampling every %d ms", WORK_SAMPLE_PERIOD_MS);
 }
 
@@ -92,6 +93,7 @@ void WorkImplementation::do_work()
         humidity = -127.0f;
     }
 
+    /*
     uint32_t current_time = MyNTP::getEpochTimestamp();
     SensorData data(current_time, 1);
 
@@ -106,7 +108,7 @@ void WorkImplementation::do_work()
 
     // Send via BLE (your existing safe function)
     send_notification_safe(msg);
-
+*/
     char timestamp[32];
     MyNTP::getTimestamp(timestamp, sizeof(timestamp));
 
@@ -115,6 +117,7 @@ void WorkImplementation::do_work()
 
     // Publish to MQTT - function returns void so we can't check for errors
     MyMQTT::publish("acreage/well", msg);
+    ESP_LOGI(TAG, "Published to MQTT: %s", msg); 
 
     sampleCount++;
 }

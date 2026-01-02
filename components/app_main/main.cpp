@@ -30,16 +30,74 @@
 #include "loop.h"
 
 static const char *TAG = "MAIN";
+RTC_DATA_ATTR static int boot_count = 0;
+
+
+void mqtt_command_handler(const char *topic, const char *payload)
+{
+    if (!topic || !payload)
+        return;
+
+    ESP_LOGI("MQTT_CMD", "Received: %s => %s", topic, payload);
+
+    const char *prefix = "acreage/well/cmd/";
+    if (strncmp(topic, prefix, strlen(prefix)) != 0)
+    {
+        return; // Not a command topic
+    }
+
+    const char *cmd = topic + strlen(prefix);
+
+    if (strcmp(cmd, "mode") == 0)
+    {
+        if (strcmp(payload, "always_on") == 0)
+        {
+            ESP_LOGI("MQTT_CMD", "Mode set to ALWAYS_ON");
+            MySystem::set_device_mode(DEVICE_MODE_ALWAYS_ON);
+            // No reboot needed if already in awake mode
+        }
+        else if (strcmp(payload, "deep_sleep") == 0)
+        {
+            ESP_LOGI("MQTT_CMD", "Mode set to DEEP_SLEEP - rebooting to apply");
+            MySystem::set_device_mode(DEVICE_MODE_DEEP_SLEEP);
+
+            vTaskDelay(pdMS_TO_TICKS(1000)); // Let logs flush, allow clean MQTT disconnect
+            esp_restart();
+        }
+    }
+    else if (strcmp(cmd, "restart") == 0)
+    {
+        ESP_LOGI("MQTT_CMD", "Restart requested");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+    }
+}
 
 // =================================================================
 // APP ENTRY POINT
 // =================================================================
 extern "C" void app_main(void)
 {
+    ++boot_count;
+    vTaskDelay(pdMS_TO_TICKS(500));
+    ESP_LOGI(TAG, "Boot count: %d", boot_count);
+
     ESP_LOGI(TAG, "Permanent 8-char Device ID: %s", MySystem::get_device_id());
     esp_log_level_set("MYLED", ESP_LOG_NONE);
     // esp_log_level_set("BME280_OLED", ESP_LOG_NONE);
     esp_log_level_set("CUSTOM_WEBSERVER", ESP_LOG_NONE);
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    ESP_LOGI(TAG, "NVS flash re-initialized for boot");
+    // Early boot logs to confirm full reset
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    esp_sleep_wakeup_cause_t wake_cause = esp_sleep_get_wakeup_cause();
+    ESP_LOGI(TAG, "FULL BOOT - Reset reason: %d | Wake cause: %d (4=TIMER)", reset_reason, wake_cause);
 
     // Initialize all NVS JSON objects
     esp_err_t err = init_nvs_json_all();
@@ -50,100 +108,96 @@ extern "C" void app_main(void)
     }
     MySystem::check_psram();
 
-    init_led(GREEN_LED);
-    init_led(RED_LED);
-    init_led(BLUE_LED);
-    led_set_state(RED_LED, true); // app started indicator
+    device_mode_t current_mode = MySystem::get_device_mode();
 
-    MyWiFi::global_init();
-
-    // Automatic WiFi start: Tries STA if creds exist, else starts AP for provisioning
-    esp_err_t wifi_ret = MyWiFi::startWiFiAuto();
-    if (wifi_ret == WIFI_MODE_STA_SUCCESS)
+    if (current_mode == DEVICE_MODE_DEEP_SLEEP)
     {
-        led_set_state(GREEN_LED, true);
-        MyWiFi::start_mdns();
+        ESP_LOGI(TAG, "=== STARTING IN DEEP SLEEP MODE ===");
+        sleep_loop_params_t deep_params = {
+            .sleep_duration = 900, // 15 minutes
+            .mqtt_uri = MQTTConfig::URI,
+            .work_impl = &WorkImplementation::getInstance()};
+
+        xTaskCreate(
+            deep_sleep_loop_task,
+            "deep_sleep_task",
+            16384, // Adjust stack if needed
+            &deep_params,
+            5,
+            NULL);
     }
-    else if (wifi_ret == WIFI_MODE_AP_SUCCESS)
+    else
     {
-        led_start_flashing(GREEN_LED, 500);
-    }
-    else if (wifi_ret != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to start WiFi (STA or AP). Halting.");
-        return;
-    }
+        ESP_LOGI(TAG, "=== STARTING IN AWAKE MODE ===");
 
-    ble_provisioning_init(false);
-    start_work_task();
-/*
-        // Prepare parameters for the task
-    sleep_loop_params_t params = {
-        .sleep_duration = 30,
-        .mqtt_uri = MQTTConfig::URI,
-        .work_impl = &WorkImplementation::getInstance()
-    };
+        init_led(GREEN_LED);
+        init_led(RED_LED);
+        init_led(BLUE_LED);
+        led_set_state(RED_LED, true); // app started indicator
 
-    // Create the sleep_loop task
-    BaseType_t task_created = xTaskCreate(
-        sleep_loop_task,           // Task function
-        "sleep_loop_task",        // Task name
-        16384,                     // Stack size (adjust as needed)
-        &params,                  // Task parameters
-        5,                        // Task priority
-        NULL                      // Task handle (NULL if not needed)
-    );
+        MyWiFi::global_init();
 
-    if (task_created != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create sleep_loop task");
-        return;
-    }
-
-    ESP_LOGI(TAG, "sleep_loop task created successfully");
-*/
-
-    start_custom_webserver(); 
-    // If in STA mode, initialize NTP (skipped in AP for offline provisioning)
-    if (MyWiFi::s_sta_netif != nullptr && MyWiFi::isConnected())
-    {
-        MyNTP::initialize();
-        MyNTP::syncTime();
-        // --- MQTT Connection Attempt ---
-        if (MyMQTT::connect( MQTTConfig::URI) != ESP_OK)
+        esp_err_t wifi_ret = MyWiFi::startWiFiAuto();
+        if (wifi_ret == WIFI_MODE_STA_SUCCESS)
         {
-            ESP_LOGE(TAG, "Failed to connect MQTT. Disconnecting WiFi and retrying.");
-            MyMQTT::shutdown();            // Shutdown MQTT
-        } else {
-            ESP_LOGI(TAG, "connected to MQTT.");
+            led_set_state(GREEN_LED, true);
+            MyWiFi::start_mdns();
         }
-    }
-
-    // Handle provisioning completion in AP mode (wait for BLE/web signal)
-    if (wifi_ret == WIFI_MODE_AP_SUCCESS)
-    {
-        ESP_LOGI(TAG, "In AP mode: Waiting for provisioning signal...");
-        if (provisioning_sem != NULL && xSemaphoreTake(provisioning_sem, portMAX_DELAY) == pdTRUE)
+        else if (wifi_ret == WIFI_MODE_AP_SUCCESS)
         {
-            ESP_LOGI(TAG, "Provisioning signaled: Credentials applied, rebooting to STA mode.");
-            // Optional: Stop webserver/BLE tasks here if needed for clean shutdown
-            // stop_webserver(web_server);
-            // ble_provisioning_deinit(); // If you have a deinit function
-            vTaskDelay(pdMS_TO_TICKS(1000)); // Brief delay for logs to flush
-            esp_restart();
+            led_start_flashing(GREEN_LED, 500);
         }
-        else
+        else if (wifi_ret != ESP_OK)
         {
-            ESP_LOGW(TAG, "Provisioning semaphore wait failed or timed out.");
+            ESP_LOGE(TAG, "Failed to start WiFi (STA or AP). Halting.");
+            return;
         }
-    }
 
-    // Main task now idles; webserver and sensor tasks run in background
-    // Optional: Add timeout in AP mode to auto-reboot if no provisioning (e.g., after 10min)
-    while (1)
-    {
-        //   led_set_state(RED_LED, true);
-        vTaskDelay(1000 / portTICK_PERIOD_MS); // Example: If you have a connected BLE device, send a status message
-        // send_message_notification(some_conn_handle, "WiFi Status: Connected");
-        //   led_set_state(RED_LED, false);
+        ble_provisioning_init(false);
+        start_work_task();
+        start_custom_webserver();
+
+        // === MQTT Setup in Awake Mode ===
+        if (MyWiFi::s_sta_netif != nullptr && MyWiFi::isConnected())
+        {
+            MyNTP::initialize();
+            MyNTP::syncTime();
+
+            if (MyMQTT::connect(MQTTConfig::URI) == ESP_OK)
+            {
+                ESP_LOGI(TAG, "Connected to MQTT in awake mode");
+
+                // Register the command handler so we can receive mode changes
+                MyMQTT::registerMessageHandler(mqtt_command_handler);
+
+                // Subscribe to all command topics
+                MyMQTT::subscribe("acreage/well/cmd/#", 1);
+
+                ESP_LOGI(TAG, "MQTT command handler registered - ready for remote commands");
+            }
+            else
+            {
+                ESP_LOGE(TAG, "Failed to connect to MQTT in awake mode");
+                MyMQTT::shutdown();
+            }
+        }
+
+        // Handle provisioning in AP mode
+        if (wifi_ret == WIFI_MODE_AP_SUCCESS)
+        {
+            ESP_LOGI(TAG, "In AP mode: Waiting for provisioning signal...");
+            if (provisioning_sem != NULL && xSemaphoreTake(provisioning_sem, portMAX_DELAY) == pdTRUE)
+            {
+                ESP_LOGI(TAG, "Provisioning complete - rebooting to apply STA credentials");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                esp_restart();
+            }
+        }
+
+        // Main loop - just idle, everything runs in background tasks
+        while (1)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
     }
 }
