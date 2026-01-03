@@ -1,0 +1,13 @@
+# idf_component.yml
+version: "1.0.0"
+description: "esp-humidity"
+url: "https://github.com/dhiles/esp-humidity"
+
+dependencies:
+  esp32-shared:
+    git: https://github.com/dhiles/esp32-shared.git
+    branch: main
+
+  esp32-data:
+    git: https://github.com/dhiles/esp32-data.git
+    branch: main

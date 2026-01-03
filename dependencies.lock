@@ -1,20 +1,20 @@
 dependencies:
   esp32-data:
-    component_hash: 27440c7eb3e76b164e9adb7b58846a809a0470e8e51fefed78afdc9bf0b36688
+    component_hash: edc77a24bcf4e590369b23249dc5741b44a303d3d74490ed332b3a74f718ca6f
     dependencies: []
     source:
       git: https://github.com/dhiles/esp32-data.git
       path: .
       type: git
-    version: d4c26a127f1aa33990fc5112da9e3179fc3a1e55
+    version: 02e8fabde8f026e04c1a901b4ed1838ef90af60b
   esp32-shared:
-    component_hash: 9326b27db4bea5c4d36186b9b68efc266ab9cdc8b3780e04ab82d18efc029633
+    component_hash: 2aaea1ca6a92487d5dd435e72510a68f38263baaa649c3b23c31bc917699176f
     dependencies: []
     source:
       git: https://github.com/dhiles/esp32-shared.git
       path: .
       type: git
-    version: 7326396a8dfa11e83b5372ff91b17ad76d577c43
+    version: 30af468a8ae406ef19f9ea190689301cdfae58ae
   espressif/cjson:
     component_hash: 9372811fb197926f522c467627cf4a8e72b681e0366e17879631da801103aef3
     dependencies:
@@ -42,7 +42,7 @@ dependencies:
       type: local
     version: 1.4.2
   espressif/mdns:
-    component_hash: 3ec0af5f6bce310512e90f482388d21cc7c0e99668172d2f895356165fc6f7c5
+    component_hash: 29e47564b1a7ee778135e17fbbf2a2773f71c97ebabfe626c8eda7c958a7ad16
     dependencies:
     - name: idf
       require: private
@@ -50,7 +50,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.8.2
+    version: 1.9.1
   idf:
     source:
       type: idf
